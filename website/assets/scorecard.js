@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   var SOURCE = "https://ledger.secopsai.dev/public/frontier-scorecard";
-  var LABELS = { "pass": "PASS", "fail": "FAIL", "not measured": "NOT MEASURED" };
+  var LABELS = { "pass": "Pass", "fail": "Fail", "not measured": "Not measured" };
   var CLASSES = { "pass": "pass", "fail": "fail", "not measured": "none" };
 
   function el(tag, attrs, text) {

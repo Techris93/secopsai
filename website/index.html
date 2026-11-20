@@ -82,10 +82,8 @@
             flex-wrap: wrap;
         }
         .wordmark {
-            font-family: var(--mono);
             font-weight: 700;
             font-size: 18px;
-            letter-spacing: 0.12em;
             text-decoration: none;
             color: var(--ink);
             display: inline-flex;
@@ -101,9 +99,7 @@
         .doc-nav {
             display: flex;
             gap: 20px;
-            font-family: var(--mono);
             font-size: 12px;
-            letter-spacing: 0.06em;
         }
         .doc-nav a {
             color: var(--ink-2);
@@ -147,7 +143,6 @@
         .dm-meta-key {
             font-family: var(--mono);
             font-size: 10px;
-            letter-spacing: 0.1em;
             color: var(--muted);
             display: block;
             margin-bottom: 3px;
@@ -182,7 +177,6 @@
         .procedure-title {
             font-family: var(--mono);
             font-size: 11px;
-            letter-spacing: 0.1em;
             color: var(--muted);
             border-bottom: 1px solid var(--rule);
             padding: 8px 14px;
@@ -217,7 +211,6 @@
         .tab {
             font-family: var(--mono);
             font-size: 12px;
-            letter-spacing: 0.05em;
             padding: 9px 16px;
             background: transparent;
             border: 0;
@@ -251,7 +244,6 @@
         .copy-btn {
             font-family: var(--mono);
             font-size: 11px;
-            letter-spacing: 0.08em;
             border: 0;
             border-left: 1px solid var(--rule-dark);
             background: var(--paper);
@@ -274,17 +266,13 @@
         }
         .spec-table caption {
             text-align: left;
-            font-family: var(--mono);
             font-size: 11px;
-            letter-spacing: 0.1em;
             color: var(--muted);
             padding: 8px 0;
             caption-side: top;
         }
         .spec-table th {
-            font-family: var(--mono);
             font-size: 11px;
-            letter-spacing: 0.08em;
             font-weight: 700;
             text-align: left;
             padding: 8px 12px;
@@ -312,10 +300,8 @@
             background: var(--panel);
         }
         .notice-label {
-            font-family: var(--mono);
             font-weight: 700;
             font-size: 11px;
-            letter-spacing: 0.12em;
             padding: 12px 14px;
             border-right: 1px solid;
             display: flex;
@@ -348,9 +334,7 @@
         .status-cell .cell-title { font-weight: 600; display: block; margin-bottom: 4px; }
         .status-cell .cell-desc { color: var(--muted); font-size: 12.5px; }
         .status-tag {
-            font-family: var(--mono);
             font-size: 10px;
-            letter-spacing: 0.1em;
             padding: 2px 6px;
             border: 1px solid currentColor;
             margin-left: 6px;
@@ -361,10 +345,9 @@
 
         /* ── Share row ───────────────────────────────────────── */
         .share-row { margin-top: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
-        .share-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+        .share-label { font-size: 11px; color: var(--muted); }
         .share-links { display: flex; flex-wrap: wrap; gap: 8px; }
-        .share-link {
-            font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+        .share-link { font-size: 11px;
             color: var(--ink); background: transparent; border: 1px solid var(--rule, #c9cdd2);
             padding: 7px 10px; text-decoration: none; cursor: pointer; line-height: 1.2;
         }
@@ -383,7 +366,7 @@
             font-size: 12.5px;
             color: var(--muted);
         }
-        .doc-footer .footer-id { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; }
+        .doc-footer .footer-id { font-family: var(--mono); font-size: 11px; }
         .doc-footer a { color: var(--note); text-decoration: none; }
 
         @media (max-width: 640px) {
@@ -436,13 +419,13 @@
 <div class="page">
 
     <header class="doc-header">
-        <a class="wordmark" href="/"><img class="wordmark-mark" src="/assets/favicon-512.png" alt="SecOpsAI mark" width="26" height="26">SECOPSAI</a>
+        <a class="wordmark" href="/"><img class="wordmark-mark" src="/assets/favicon-512.png" alt="SecOpsAI mark" width="26" height="26">SecOpsAI</a>
         <nav class="doc-nav" aria-label="Document">
-            <a href="#install">INSTALL</a>
-            <a href="#capabilities">CAPABILITIES</a>
-            <a href="https://docs.secopsai.dev">DOCS</a>
-            <a href="https://blog.secopsai.dev">RESEARCH</a>
-            <a href="https://github.com/Techris93/secopsai">GITHUB</a>
+            <a href="#install">Install</a>
+            <a href="#capabilities">Capabilities</a>
+            <a href="https://docs.secopsai.dev">Docs</a>
+            <a href="https://blog.secopsai.dev">Research</a>
+            <a href="https://github.com/Techris93/secopsai">GitHub</a>
         </nav>
     </header>
 
@@ -454,15 +437,15 @@
         </div>
         <div class="dm-meta">
             <div class="dm-meta-item">
-                <span class="dm-meta-key">PLATFORMS</span>
+                <span class="dm-meta-key">Platforms</span>
                 macOS · Linux · Windows · Edge sensors
             </div>
             <div class="dm-meta-item">
-                <span class="dm-meta-key">DEPLOYMENT</span>
+                <span class="dm-meta-key">Deployment</span>
                 Local-first · No log shipping by default
             </div>
             <div class="dm-meta-item">
-                <span class="dm-meta-key">SOURCE</span>
+                <span class="dm-meta-key">Source</span>
                 Open source · MIT licensed
             </div>
         </div>
@@ -481,9 +464,9 @@
         <h2>Architecture</h2>
         <p>SecOpsAI is one platform with four components. Each component has one clear responsibility.</p>
         <table class="spec-table">
-            <caption>TABLE 1 — PLATFORM COMPONENTS</caption>
+            <caption>Table 1 — platform components</caption>
             <thead>
-                <tr><th>COMPONENT</th><th>RESPONSIBILITY</th><th>RUNS ON</th></tr>
+                <tr><th>Component</th><th>Responsibility</th><th>Runs on</th></tr>
             </thead>
             <tbody>
                 <tr>
@@ -515,8 +498,8 @@
         <h2>Enterprise security operations</h2>
         <p>SecOpsAI keeps the local-first workflow while adding a guarded enterprise foundation for normalized cloud and Kubernetes events, vulnerability prioritization, authorized DAST, GRC evidence, customer questionnaires, threat models, and penetration-test coordination.</p>
         <table class="spec-table">
-            <caption>TABLE 2 — ENTERPRISE CONTROLS</caption>
-            <thead><tr><th>CAPABILITY</th><th>DEFAULT</th><th>BOUNDARY</th></tr></thead>
+            <caption>Table 2 — enterprise controls</caption>
+            <thead><tr><th>Capability</th><th>Default</th><th>Boundary</th></tr></thead>
             <tbody>
                 <tr><td>AWS / GCP / Kubernetes connectors</td><td>Read-only</td><td>Credentials stay server-side; no IAM, firewall, or cluster mutation</td></tr>
                 <tr><td>DAST</td><td>Passive and approval-gated</td><td>HTTPS ownership and authorization are required</td></tr>
@@ -536,10 +519,10 @@
 
         <div class="tabs" role="tablist" aria-label="Platform">
             <button class="tab" id="tab-macos" role="tab" aria-controls="panel-macos" aria-selected="true" data-tab="macos">macOS</button>
-            <button class="tab" id="tab-linux" role="tab" aria-controls="panel-linux" aria-selected="false" data-tab="linux" tabindex="-1">LINUX</button>
-            <button class="tab" id="tab-windows" role="tab" aria-controls="panel-windows" aria-selected="false" data-tab="windows" tabindex="-1">WINDOWS</button>
-            <button class="tab" id="tab-openclaw" role="tab" aria-controls="panel-openclaw" aria-selected="false" data-tab="openclaw" tabindex="-1">OPENCLAW</button>
-            <button class="tab" id="tab-hermes" role="tab" aria-controls="panel-hermes" aria-selected="false" data-tab="hermes" tabindex="-1">HERMES</button>
+            <button class="tab" id="tab-linux" role="tab" aria-controls="panel-linux" aria-selected="false" data-tab="linux" tabindex="-1">Linux</button>
+            <button class="tab" id="tab-windows" role="tab" aria-controls="panel-windows" aria-selected="false" data-tab="windows" tabindex="-1">Windows</button>
+            <button class="tab" id="tab-openclaw" role="tab" aria-controls="panel-openclaw" aria-selected="false" data-tab="openclaw" tabindex="-1">OpenClaw</button>
+            <button class="tab" id="tab-hermes" role="tab" aria-controls="panel-hermes" aria-selected="false" data-tab="hermes" tabindex="-1">Hermes</button>
         </div>
 
         <div class="tab-panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" data-panel="macos">
@@ -548,7 +531,7 @@
                 <div class="procedure-body">
                     <div class="install-cmd">
                         <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">COPY</button>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">Copy</button>
                     </div>
                     <p class="install-note">Requires macOS 12 or later. Edge discovery requires Nmap. The installer checks for it.</p>
                 </div>
@@ -560,7 +543,7 @@
                 <div class="procedure-body">
                     <div class="install-cmd">
                         <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">COPY</button>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">Copy</button>
                     </div>
                     <p class="install-note">Requires Python 3.10 or later. A systemd service keeps the Edge worker running.</p>
                 </div>
@@ -572,7 +555,7 @@
                 <div class="procedure-body">
                     <div class="install-cmd">
                         <code>wsl --install -d Ubuntu</code>
-                        <button class="copy-btn" data-copy="wsl --install -d Ubuntu">COPY</button>
+                        <button class="copy-btn" data-copy="wsl --install -d Ubuntu">Copy</button>
                     </div>
                     <p class="install-note">SecOpsAI runs in WSL2 on Windows. After WSL is ready, use the Linux procedure.</p>
                 </div>
@@ -584,7 +567,7 @@
                 <div class="procedure-body">
                     <div class="install-cmd">
                         <code>openclaw plugins install secopsai</code>
-                        <button class="copy-btn" data-copy="openclaw plugins install secopsai">COPY</button>
+                        <button class="copy-btn" data-copy="openclaw plugins install secopsai">Copy</button>
                     </div>
                     <p class="install-note">The OpenClaw plugin connects SecOpsAI to your local automation runtime.</p>
                 </div>
@@ -596,7 +579,7 @@
                 <div class="procedure-body">
                     <div class="install-cmd">
                         <code>curl -fsSL https://secopsai.dev/install-hermes.sh | bash</code>
-                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install-hermes.sh | bash">COPY</button>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install-hermes.sh | bash">Copy</button>
                     </div>
                     <p class="install-note">Installs SecOpsAI Core, enables the read-only Hermes plugin, verifies local telemetry access, and starts the five-minute background monitor. Supports macOS, Linux, and Windows through WSL2.</p>
                 </div>
@@ -604,7 +587,7 @@
         </div>
 
         <div class="notice note">
-            <div class="notice-label">NOTE</div>
+            <div class="notice-label">Note</div>
             <div class="notice-body">Scan only networks you own or have written permission to test. SecOpsAI refuses public IP ranges by default.</div>
         </div>
     </section>
@@ -613,60 +596,60 @@
     <section class="spec" id="capabilities">
         <h2>Capabilities</h2>
         <table class="spec-table">
-            <caption>TABLE 2 — PLATFORM MODULES</caption>
+            <caption>Table 2 — platform modules</caption>
             <thead>
-                <tr><th>MODULE</th><th>FUNCTION</th><th>STATUS</th></tr>
+                <tr><th>Module</th><th>Function</th><th>Status</th></tr>
             </thead>
             <tbody>
                 <tr>
                     <td>secopsai-edge</td>
                     <td>Discovers network assets, open services, and Wi-Fi networks. Flags new devices, missing devices, and risky changes. Builds the asset inventory automatically.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>secopsai-research</td>
                     <td>Monitors eight package registries for typosquats and suspicious releases. Scores every event against your watchlists. Feeds research cases, disclosure, and published advisories.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>supply-chain-scanner</td>
                     <td>Scans project dependencies for known vulnerabilities, malicious packages, and policy violations across supported ecosystems.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>triage-engine</td>
                     <td>Correlates findings across hosts and platforms. Tracks status, disposition, notes, and evidence. Prevents duplicate work.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>asset-graph</td>
                     <td>Links sites, sensors, assets, services, and Wi-Fi networks into one queryable graph. Answers what changed, when, and where.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>adaptive-response</td>
                     <td>Evaluates response posture from signal memory. Recommends containment actions. An operator approves every action.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>ai-dependency-guard</td>
                     <td>Checks AI-suggested packages for hallucinated names and lookalike (slopsquatting) risk before installation.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>reports</td>
                     <td>Generates executive and technical reports from findings and graph context. Exports printable, client-ready documents.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>splunk-hec</td>
                     <td>Exports normalized findings and report summaries to Splunk HEC. Raw telemetry never leaves the local store.</td>
-                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                    <td>Live <span class="status-tag tag-live">Live</span></td>
                 </tr>
                 <tr>
                     <td>secopsai-cloud</td>
                     <td>Hosted dashboard, scheduled scans, and multi-site workflows for teams and service providers.</td>
-                    <td>Pilot <span class="status-tag tag-beta">PILOT</span></td>
+                    <td>Pilot <span class="status-tag tag-beta">Pilot</span></td>
                 </tr>
             </tbody>
         </table>
@@ -676,9 +659,9 @@
     <section class="spec" id="deployment">
         <h2>Deployment models</h2>
         <table class="spec-table">
-            <caption>TABLE 3 — SUPPORTED DEPLOYMENTS</caption>
+            <caption>Table 3 — supported deployments</caption>
             <thead>
-                <tr><th>MODEL</th><th>DESCRIPTION</th><th>BEST FOR</th></tr>
+                <tr><th>Model</th><th>Description</th><th>Best for</th></tr>
             </thead>
             <tbody>
                 <tr>
@@ -710,9 +693,9 @@
         <h2>Data and AI boundaries</h2>
         <p>SecOpsAI uses AI where it helps: summaries, explanations, and report text. The platform never lets AI decide what is true.</p>
         <table class="spec-table">
-            <caption>TABLE 4 — DATA HANDLING RULES</caption>
+            <caption>Table 4 — data handling rules</caption>
             <thead>
-                <tr><th>DATA TYPE</th><th>LOCATION</th><th>LEAVES YOUR SYSTEM?</th></tr>
+                <tr><th>Data type</th><th>Location</th><th>Leaves your system?</th></tr>
             </thead>
             <tbody>
                 <tr><td>raw-scans</td><td>Local store only</td><td>Never</td></tr>
@@ -728,7 +711,7 @@
         <h2>Operation</h2>
         <p>SecOpsAI is terminal-native. The example shows a standard operator session.</p>
         <div class="procedure">
-            <div class="procedure-title"><span>EXAMPLE 1</span><span>STANDARD OPERATOR SESSION</span></div>
+            <div class="procedure-title"><span>Example 1</span><span>Standard operator session</span></div>
             <div class="procedure-body">
 <pre><span class="prompt">$</span> secopsai refresh --platform macos,openclaw,hermes
 <span class="ok-line">[OK]</span> <span class="dim-line">Collected host and agent telemetry. Findings persisted to the local store.</span>
@@ -752,15 +735,15 @@
         <p>SecOpsAI collects and analyzes. It takes no offensive action. These rules apply everywhere in the platform.</p>
 
         <div class="notice note">
-            <div class="notice-label">NOTE</div>
+            <div class="notice-label">Note</div>
             <div class="notice-body">Raw scan output and package artifacts stay on your machine. Cloud reports contain minimized findings only.</div>
         </div>
         <div class="notice caution">
-            <div class="notice-label">CAUTION</div>
+            <div class="notice-label">Caution</div>
             <div class="notice-body">The platform never executes package code during analysis. Static analysis is the default. Sandbox analysis needs your explicit approval.</div>
         </div>
         <div class="notice warning">
-            <div class="notice-label">WARNING</div>
+            <div class="notice-label">Warning</div>
             <div class="notice-body">Do not scan networks you do not own or do not have written permission to test. Unauthorized scanning can be a criminal offense. Use the dry-run preview before every scan.</div>
         </div>
     </section>
@@ -769,9 +752,9 @@
     <section class="spec" id="references">
         <h2>References</h2>
         <table class="spec-table">
-            <caption>TABLE 5 — RELATED DOCUMENTS</caption>
+            <caption>Table 5 — related documents</caption>
             <thead>
-                <tr><th>REF</th><th>DOCUMENT</th><th>LOCATION</th></tr>
+                <tr><th>Ref</th><th>Document</th><th>Location</th></tr>
             </thead>
             <tbody>
                 <tr><td>[R1]</td><td>Operator documentation and runbooks</td><td><a href="https://docs.secopsai.dev">docs.secopsai.dev</a></td></tr>

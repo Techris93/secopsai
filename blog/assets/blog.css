@@ -1,7 +1,7 @@
 /* ──────────────────────────────────────────────────────────────
    SecOpsAI Research — ASD S1000D technical-publication style
-   Light paper, 1px rules, semantic color only. IBM Plex Mono for
-   identifiers, Inter for text.
+   Light paper, 1px rules, semantic color only. JetBrains Mono for
+   code and identifiers, Inter for everything else.
    ────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: light;
@@ -22,7 +22,7 @@
   --ok-bg: #EBF4EE;
   --critical: #7A1010;
   --radius: 2px;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -75,10 +75,8 @@ body {
 }
 .brand-mark { width: 26px; height: 26px; }
 .brand-title {
-  font-family: var(--mono);
   font-weight: 700;
   font-size: 14px;
-  letter-spacing: 0.12em;
   display: flex;
   gap: 8px;
 }
@@ -86,9 +84,7 @@ body {
 .nav-links {
   display: flex;
   gap: 20px;
-  font-family: var(--mono);
   font-size: 12px;
-  letter-spacing: 0.06em;
 }
 .nav-links a {
   color: var(--ink-2);
@@ -142,11 +138,8 @@ body {
 }
 .eyebrow,
 .section-label {
-  font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.14em;
   color: var(--muted);
-  text-transform: uppercase;
   display: block;
   margin-bottom: 12px;
 }
@@ -170,9 +163,7 @@ body {
 /* ── Buttons ─────────────────────────────────────────────── */
 .button,
 button.button {
-  font-family: var(--mono);
   font-size: 12px;
-  letter-spacing: 0.08em;
   display: inline-block;
   padding: 10px 18px;
   border: 1px solid var(--ink);
@@ -188,7 +179,6 @@ button.button {
   color: var(--ink);
 }
 .button.secondary:hover { background: var(--note-bg); color: var(--note); border-color: var(--note); }
-.scroll-indicator { display: none; }
 
 /* ── Sections & cards ────────────────────────────────────── */
 .content-section,
@@ -229,16 +219,17 @@ button.button {
   font-size: 14px;
   margin: 0 0 10px;
 }
-.intelligence-card { padding: 18px; border-left: 3px solid var(--note); display: block; color: inherit; text-decoration: none; }
+.intelligence-card { padding: 18px; display: block; color: inherit; text-decoration: none; }
 .intelligence-card h2 { color: var(--ink); }
 .intelligence-card:hover h2, .intelligence-card:focus-visible h2 { color: var(--note); }
-.card-cta { display: inline-block; margin-top: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--note); }
+.card-cta { display: inline-block; margin-top: 10px; font-size: 11px; color: var(--note); }
 .intelligence-card h2 { font-size: 16px; margin: 6px 0 8px; }
 
 /* ── Subscribe ───────────────────────────────────────────── */
 .subscribe-section > * { max-width: 880px; }
 .subscribe-top { display: flex; flex-direction: column; gap: 8px; }
 .subscribe-top h2 { font-size: 18px; margin: 0; }
+.topic-heading { font-size: 18px; margin: 24px 0 12px; }
 .subscribe-top > p { color: var(--muted); font-size: 13.5px; margin: 0; }
 .section-divider { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
 
@@ -251,24 +242,12 @@ button.button {
 }
 .feed-card { padding: 0; overflow: hidden; }
 .feed-card:hover { border-color: var(--ink); }
-.feed-card-bar {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  padding: 6px 14px;
-  border-bottom: 1px solid var(--rule);
-  background: var(--note-bg);
-  color: var(--note);
-}
 .feed-card-body { padding: 14px; }
 .feed-card-head { display: flex; gap: 12px; align-items: flex-start; }
 .feed-icon { display: none; }
 .feed-choice-kicker {
-  font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.12em;
   color: var(--muted);
-  text-transform: uppercase;
 }
 .feed-card-head p { margin: 2px 0 6px; }
 .feed-card h3 { font-size: 15px; margin: 4px 0 6px; }
@@ -282,7 +261,6 @@ button.button {
 .section-kicker,
 .topic-card-top,
 .command-chip {
-  font-family: var(--mono);
   font-size: 12px;
 }
 .feed-url {
@@ -298,7 +276,6 @@ button.button {
 .copy-url {
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.1em;
   border: 1px solid var(--rule-dark);
   background: var(--panel);
   color: var(--ink-2);
@@ -312,9 +289,7 @@ button.button {
 /* ── Topic catalog ───────────────────────────────────────── */
 .topic-catalog { margin-top: 24px; }
 .section-kicker {
-  letter-spacing: 0.12em;
   color: var(--muted);
-  text-transform: uppercase;
   font-size: 11px;
   display: flex;
   gap: 10px;
@@ -335,7 +310,6 @@ button.button {
   display: flex;
   justify-content: space-between;
   font-size: 10.5px;
-  letter-spacing: 0.08em;
   color: var(--muted);
   margin-bottom: 8px;
 }
@@ -352,7 +326,6 @@ button.button {
 .topic-filter {
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.06em;
   padding: 6px 12px;
   border: 1px solid var(--rule-dark);
   background: var(--panel);
@@ -392,11 +365,9 @@ button.button {
 .tags { margin-top: 10px; gap: 6px; }
 .pill {
   font-size: 10px;
-  letter-spacing: 0.1em;
   padding: 2px 7px;
   border: 1px solid currentColor;
   border-radius: var(--radius);
-  text-transform: uppercase;
   color: var(--muted);
 }
 .critical { color: var(--critical); border-color: var(--critical); }
@@ -416,7 +387,6 @@ button.button {
 .breadcrumb {
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.06em;
   color: var(--muted);
   margin-bottom: 16px;
 }
@@ -487,7 +457,6 @@ button.button {
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.08em;
   border-bottom: 1.5px solid var(--ink);
   background: var(--paper);
 }
@@ -596,9 +565,7 @@ button.button {
 .footer-top span,
 .footer-bottom span,
 .copyright {
-  font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.06em;
 }
 .footer-top > div,
 .footer-bottom > div { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
@@ -615,9 +582,7 @@ button.button {
 .share-bar { margin: 32px 0 8px; padding-top: 18px; border-top: 1px solid var(--rule); }
 .share-bar-compact { margin: 14px 0 0; padding-top: 0; border-top: 0; }
 .share-links { display: flex; flex-wrap: wrap; gap: 8px; }
-.share-link {
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--ink-2); background: var(--paper); border: 1px solid var(--rule);
+.share-link { font-size: 11px;  color: var(--ink-2); background: var(--paper); border: 1px solid var(--rule);
   padding: 7px 10px; text-decoration: none; cursor: pointer; line-height: 1.2;
 }
 .share-link:hover, .share-link:focus-visible { color: var(--note); border-color: var(--note); background: var(--note-bg); }
@@ -629,7 +594,7 @@ button.button {
 .latest-strip { margin-top: 28px; border-top: 1px solid var(--rule); }
 .latest-head { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 0 6px; }
 .latest-head h2 { font-size: 15px; margin: 0; }
-.latest-head a { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--note); text-decoration: none; }
+.latest-head a { font-size: 11px; color: var(--note); text-decoration: none; }
 .latest-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--rule); color: var(--ink); text-decoration: none; }
 .latest-row:hover .latest-title { color: var(--note); }
 .latest-title { font-weight: 600; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -671,7 +636,7 @@ button.button {
 
 /* Research posts: TL;DR box and indicator downloads */
 .tldr { background: var(--note-bg); border-left: 3px solid var(--note); padding: 4px 20px 8px; margin: 0 0 28px; border-radius: var(--radius); }
-.tldr h2 { margin-top: 14px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--note); }
+.tldr h2 { margin-top: 14px; font-family: var(--mono); font-size: 13px; color: var(--note); }
 .tldr ul { margin: 8px 0; padding-left: 18px; }
 .tldr li { margin: 6px 0; }
 .ioc-card ul { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -683,7 +648,7 @@ button.button {
 .comment-form { display: grid; gap: 16px; margin-top: 20px; }
 .comment-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .comment-form .field { display: grid; gap: 6px; min-width: 0; align-content: start; }
-.comment-form label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.comment-form label { font-size: 11px; color: var(--ink-2); }
 .comment-form input,
 .comment-form textarea {
   width: 100%;
@@ -744,7 +709,6 @@ button.button {
 .brief-status {
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.04em;
   padding: 2px 7px;
   border: 1px solid currentColor;
   border-radius: var(--radius);
@@ -765,8 +729,6 @@ button.button {
   margin: 0 0 4px;
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 .post-body .brief-item-head h2 { margin: 0 0 8px; border: 0; padding: 0; font-size: 18px; line-height: 1.35; }

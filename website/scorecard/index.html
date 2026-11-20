@@ -24,28 +24,30 @@
         a { color: var(--note); }
         .page { max-width: 880px; margin: 0 auto; padding: 0 16px 96px; }
         .doc-header { border-bottom: 2px solid var(--ink); padding: 18px 0 14px; display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-        .wordmark { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: 0.12em; text-decoration: none; color: var(--ink); display: inline-flex; align-items: center; gap: 10px; }
+        .wordmark { font-weight: 700; font-size: 18px; text-decoration: none; color: var(--ink); display: inline-flex; align-items: center; gap: 10px; }
         .wordmark img { width: 26px; height: 26px; border-radius: 6px; display: block; }
-        .doc-nav { display: flex; gap: 20px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-wrap: wrap; }
+        .doc-nav { display: flex; gap: 20px; font-size: 12px; flex-wrap: wrap; }
         .doc-nav a { color: var(--ink-2); text-decoration: none; }
         .doc-nav a:hover { color: var(--note); }
         h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; margin: 32px 0 16px; }
         .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border: 1px solid var(--rule-dark); background: var(--panel); }
         .meta div { padding: 10px 14px; border-right: 1px solid var(--rule); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
         .meta div:last-child { border-right: 0; }
-        .key { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); display: block; margin-bottom: 3px; text-transform: uppercase; }
+        .key { font-size: 10px; color: var(--muted); display: block; margin-bottom: 3px; }
         .meta strong { font-size: 20px; }
         section { margin-top: 40px; }
         h2 { font-size: 18px; font-weight: 700; border-bottom: 1px solid var(--rule-dark); padding-bottom: 8px; margin-bottom: 12px; }
         h2 .id { font-family: var(--mono); color: var(--muted); font-weight: 500; margin-right: 8px; }
         .table-wrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
-        table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-        th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-align: left; font-weight: 500; text-transform: uppercase; }
+        table { width: 100%; border-collapse: collapse; font-size: 13.5px; table-layout: fixed; }
+        th:first-child, td:first-child { width: 46%; }
+        th:nth-child(n+2):not(:last-child) { width: 14%; }
+        th:last-child { width: 12%; }
+        th { font-size: 10px; color: var(--muted); text-align: left; font-weight: 500; }
         th, td { padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
         tr:last-child td { border-bottom: 0; }
-        td:first-child { min-width: 200px; }
         td.num { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-        .result { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; padding: 2px 7px; border: 1px solid; white-space: nowrap; }
+        .result { font-size: 12px; padding: 2px 7px; border: 1px solid; white-space: nowrap; }
         .pass { color: var(--ok); background: var(--ok-bg); }
         .fail { color: var(--warning); background: var(--warning-bg); }
         .none { color: var(--muted); }
@@ -61,11 +63,11 @@
 <body>
 <div class="page">
     <header class="doc-header">
-        <a class="wordmark" href="/"><img src="/assets/favicon-512.png" alt="SecOpsAI mark" width="26" height="26">SECOPSAI</a>
+        <a class="wordmark" href="/"><img src="/assets/favicon-512.png" alt="SecOpsAI mark" width="26" height="26">SecOpsAI</a>
         <nav class="doc-nav" aria-label="Site">
-            <a href="/">HOME</a>
-            <a href="https://docs.secopsai.dev">DOCS</a>
-            <a href="https://github.com/Techris93/secopsai">GITHUB</a>
+            <a href="/">Home</a>
+            <a href="https://docs.secopsai.dev">Docs</a>
+            <a href="https://github.com/Techris93/secopsai">GitHub</a>
         </nav>
     </header>
 

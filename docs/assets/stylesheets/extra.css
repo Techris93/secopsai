@@ -138,7 +138,6 @@ body {
 .md-typeset .highlight .filename {
   font-family: var(--md-code-font);
   font-size: 0.68rem;
-  letter-spacing: 0.08em;
   color: var(--secops-muted);
 }
 .md-typeset .highlighttable td.linenos {
@@ -159,10 +158,7 @@ body {
   box-shadow: none;
 }
 .md-typeset table:not([class]) th {
-  font-family: var(--md-code-font);
   font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   background: var(--secops-paper);
   border-bottom: 1.5px solid var(--secops-ink);
   color: var(--secops-ink);
@@ -182,11 +178,8 @@ body {
 }
 .md-typeset .admonition > .admonition-title,
 .md-typeset details > summary {
-  font-family: var(--md-code-font);
   font-size: 0.66rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   background: var(--secops-paper);
   border-bottom: 1px solid var(--secops-rule);
   padding-left: 0.8rem;
@@ -213,13 +206,10 @@ body {
 
 /* ── Buttons & tags ──────────────────────────────────────── */
 .md-typeset .md-button {
-  font-family: var(--md-code-font);
   font-size: 0.66rem;
-  letter-spacing: 0.08em;
   border: 1px solid var(--secops-ink);
   border-radius: 2px;
   color: var(--secops-ink);
-  text-transform: uppercase;
 }
 .md-typeset .md-button--primary {
   background: var(--secops-ink);
@@ -234,7 +224,6 @@ body {
 .md-typeset .md-tag {
   font-family: var(--md-code-font);
   font-size: 0.6rem;
-  letter-spacing: 0.08em;
   border: 1px solid var(--secops-rule-dark);
   border-radius: 2px;
   color: var(--secops-muted);
@@ -278,24 +267,6 @@ body {
   padding: 0 24px;
 }
 .secops-home__hero-grid { display: block; }
-.secops-home__eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--md-code-font);
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--secops-muted);
-  margin-bottom: 1rem;
-}
-.secops-home__dot {
-  width: 8px;
-  height: 8px;
-  background: var(--secops-ok);
-  display: inline-block;
-  border-radius: 0;
-}
 .secops-home__hero h1 {
   font-size: 1.9rem;
   font-weight: 700;
@@ -320,10 +291,8 @@ body {
   margin-bottom: 1.2rem;
 }
 .secops-home__button {
-  font-family: var(--md-code-font);
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 500;
   padding: 0.6rem 1rem;
   border: 1px solid var(--secops-ink);
   background: var(--secops-ink);
@@ -337,33 +306,14 @@ body {
   color: var(--secops-ink);
 }
 .secops-home__button--ghost:hover { background: var(--secops-note-bg); color: var(--secops-note); }
-.secops-home__pills {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.secops-home__pill {
-  font-family: var(--md-code-font);
-  font-size: 0.6rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  border: 1px solid var(--secops-rule-dark);
-  color: var(--secops-muted);
-  padding: 0.2rem 0.55rem;
-  border-radius: 2px;
-}
 .secops-home__capabilities {
   border: 1px solid var(--secops-rule-dark);
-  border-left: 3px solid var(--secops-ink);
   background: #FFFFFF;
   border-radius: 2px;
   padding: 1.1rem 1.2rem;
 }
 .secops-home__capabilities-head {
-  font-family: var(--md-code-font);
   font-size: 0.62rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   color: var(--secops-muted);
   border-bottom: 1px solid var(--secops-rule);
   padding-bottom: 0.7rem;
@@ -427,10 +377,10 @@ body {
 
 /* ── Share bar ─────────────────────────────────────────────── */
 .secops-share { margin-top: 2.4rem; padding-top: 1rem; border-top: 1px solid var(--md-default-fg-color--lightest); }
-.secops-share__label { margin: 0 0 .6rem; font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--md-default-fg-color--light); }
+.secops-share__label { margin: 0 0 .6rem; font-size: .62rem; color: var(--md-default-fg-color--light); }
 .secops-share__links { display: flex; flex-wrap: wrap; gap: .4rem; }
 .md-typeset .secops-share__link {
-  display: inline-block; padding: .35rem .6rem; font-size: .6rem; letter-spacing: .06em; text-transform: uppercase;
+  display: inline-block; padding: .35rem .6rem; font-size: .6rem;
   color: var(--md-default-fg-color); background: transparent; border: 1px solid var(--md-default-fg-color--lighter);
   border-radius: 0; text-decoration: none; cursor: pointer; line-height: 1.3; font-family: inherit;
 }

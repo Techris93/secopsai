@@ -4,19 +4,14 @@
   <section class="secops-home__hero">
     <div class="secops-home__hero-grid secops-home__inner">
       <div class="secops-home__hero-copy">
-        <div class="secops-home__eyebrow">
-          <span class="secops-home__dot"></span>
-          Operator documentation for the SecOpsAI platform
-        </div>
-        <h1>Operate SecOpsAI from sensor deployment to published research.</h1>
+        <h1>SecOpsAI documentation</h1>
         <p class="secops-home__lead">
-          Deploy Edge sensors, monitor network and package-registry changes,
-          investigate findings, manage evidence and disclosure, and produce
-          reports without giving up control of raw telemetry.
+          Install and operate SecOpsAI: Edge sensors, findings triage,
+          supply-chain research, disclosure and reporting.
         </p>
         <div class="secops-home__actions">
           <a class="secops-home__button" href="{{ 'getting-started/' | url }}">
-            Get Started
+            Get started
           </a>
           <a
             class="secops-home__button secops-home__button--ghost"
@@ -28,21 +23,13 @@
             class="secops-home__button secops-home__button--ghost"
             href="{{ 'research-discovery/' | url }}"
           >
-            Research Platform
+            Research platform
           </a>
-        </div>
-        <div class="secops-home__pills">
-          <span class="secops-home__pill">Edge sensors</span>
-          <span class="secops-home__pill">Asset discovery</span>
-          <span class="secops-home__pill">Package surveillance</span>
-          <span class="secops-home__pill">Findings and triage</span>
-          <span class="secops-home__pill">Research cases</span>
-          <span class="secops-home__pill">Reports</span>
         </div>
       </div>
 
       <div class="secops-home__capabilities">
-        <div class="secops-home__capabilities-head">Platform operating sequence</div>
+        <div class="secops-home__capabilities-head">How it works</div>
         <ol class="secops-home__capabilities-list">
           <li><span class="secops-home__capabilities-step">01</span><div><strong>Collect</strong> network assets, wireless networks, package-registry events, and agent telemetry.</div></li>
           <li><span class="secops-home__capabilities-step">02</span><div><strong>Detect</strong> new devices, risky exposed services, supply-chain candidates, and behavior changes.</div></li>
@@ -57,34 +44,11 @@
 
 {% block content %}
   <div class="secops-home">
-    <section class="secops-home__section secops-home__section--manifesto">
-      <div class="secops-home__inner">
-        <p class="secops-home__section-kicker">Manifesto</p>
-        <p class="secops-home__manifesto-copy">
-          SecOpsAI connects
-          <span>network discovery</span>,
-          <span>software supply-chain monitoring</span>,
-          <span>host and agent telemetry</span>,
-          <span>findings triage</span>,
-          <span>research evidence</span>, and
-          <span>reporting</span>.
-          These documents follow the same operating sequence from collection
-          and detection through investigation, remediation, disclosure, and
-          publication.
-        </p>
-      </div>
-    </section>
 
     <section class="secops-home__section">
       <div class="secops-home__inner">
         <div class="secops-home__section-header">
-          <p class="secops-home__section-kicker">Core guides</p>
-          <h2>Follow the product workflow in operating order.</h2>
-          <p>
-            Start with deployment and data collection. Continue through
-            findings, research, and reporting. Use the reference material when
-            you integrate or scale the platform.
-          </p>
+          <h2>Guides</h2>
         </div>
 
         <div class="secops-home__grid">
@@ -143,17 +107,11 @@
     <section class="secops-home__section secops-home__section--stack">
       <div class="secops-home__inner">
         <div class="secops-home__section-header">
-          <p class="secops-home__section-kicker">Capabilities</p>
-          <h2>Documentation for each operating surface.</h2>
-          <p>
-            The information architecture follows product ownership: collection,
-            investigation, research, response, publication, and deployment.
-          </p>
+          <h2>By area</h2>
         </div>
 
         <div class="secops-home__grid secops-home__grid--stack">
           <article class="secops-home__card secops-home__card--rich">
-            <span class="secops-home__card-label">Surface 01</span>
             <h3>Discover and collect</h3>
             <p>
               Collect Edge network observations, host telemetry, and local
@@ -167,7 +125,6 @@
           </article>
 
           <article class="secops-home__card secops-home__card--rich">
-            <span class="secops-home__card-label">Surface 02</span>
             <h3>Triage and investigate</h3>
             <p>
               Move findings and package candidates through evidence-backed
@@ -182,7 +139,6 @@
           </article>
 
           <article class="secops-home__card secops-home__card--rich">
-            <span class="secops-home__card-label">Surface 03</span>
             <h3>Operate and publish</h3>
             <p>
               Apply rules, deploy services, export intelligence, and publish
@@ -204,12 +160,7 @@
         <div class="secops-home__quickstart">
           <div class="secops-home__panel">
             <div class="secops-home__section-header secops-home__section-header--compact">
-              <p class="secops-home__section-kicker">Quick Start</p>
-              <h2>Deploy in minutes.</h2>
-              <p>
-                Install Core, collect local telemetry, correlate findings, and
-                open the operator workflow from one command sequence.
-              </p>
+              <h2>Quick start</h2>
             </div>
 
             <button
@@ -222,11 +173,6 @@
 
             <div class="secops-home__terminal secops-home__terminal--wide">
               <div class="secops-home__terminal-bar">
-                <div class="secops-home__terminal-lights">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
                 <span class="secops-home__terminal-label">bash</span>
               </div>
               <pre
@@ -287,12 +233,7 @@ secopsai triage orchestrate --search-root ~/secopsai</code></pre>
     <section class="secops-home__section secops-home__section--contact" aria-labelledby="secops-home-contact-title">
       <div class="secops-home__inner">
         <div class="secops-home__section-header">
-          <p class="secops-home__section-kicker">Contact</p>
-          <h2 id="secops-home-contact-title">Reach the SecOpsAI team.</h2>
-          <p>
-            Use the right channel for security reports, independent research,
-            disclosure coordination, or research collaboration.
-          </p>
+          <h2 id="secops-home-contact-title">Contact</h2>
         </div>
         <div class="secops-home__grid">
           <a class="secops-home__card" href="mailto:security@secopsai.dev">
