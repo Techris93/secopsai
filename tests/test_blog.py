@@ -79,7 +79,7 @@ class BlogPublishingTests(unittest.TestCase):
             latest = (paths.root / "posts" / "index.html").read_text(encoding="utf-8")
             json_landing = (paths.root / "json-feed.html").read_text(encoding="utf-8")
             post_html = Path(published["post_path"]).read_text(encoding="utf-8")
-            self.assertIn("Featured Research", index)
+            self.assertIn("Featured", index)
             self.assertIn('<h2 id="subscribe-heading">Subscribe</h2>', index)
             self.assertIn("RSS 2.0 for feed readers", index)
             self.assertIn("JSON Feed 1.1 for scripts", index)
@@ -90,8 +90,7 @@ class BlogPublishingTests(unittest.TestCase):
                 '<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">\n        <div class="shell">',
                 index,
             )
-            self.assertIn("security workflow", index)
-            self.assertIn("Intelligence Categories", index)
+            self.assertIn('<h2 class="topic-heading">Topics</h2>', index)
             self.assertIn("/posts/", index)
             self.assertIn("Latest posts", latest)
             self.assertIn("data-topic-filter", latest)

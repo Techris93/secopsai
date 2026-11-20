@@ -3354,7 +3354,7 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
       <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
           <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SECOPSAI</span><span>{html.escape(subtitle).upper()}</span></span>
+          <span class="brand-title"><span>SecOpsAI</span><span>{html.escape(subtitle)}</span></span>
         </a>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
           <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -3370,13 +3370,8 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
 def _render_site_footer() -> str:
     return f"""<footer class="footer">
       <div class="shell footer-inner">
-        <div class="footer-top">
-          <div><span>SecOpsAI</span><span>Security Blog</span></div>
-          <span>Operator feed</span>
-        </div>
-        <p>New SecOpsAI detections, package advisories, OpenClaw telemetry learnings, malware behavior cards, and practical response notes.</p>
         <div class="footer-bottom">
-          <div><span>SecOpsAI Security Blog</span><span>Local-first intelligence, source-backed actions.</span></div>
+          <div><span>SecOpsAI Security Blog</span></div>
           <nav aria-label="Footer links">
             <a href="https://secopsai.dev/">Platform</a>
             <a href="/#topics">Topics</a>
@@ -3955,7 +3950,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
         featured_slug = html.escape(str(featured["slug"]))
         featured_html = f"""<section class="featured-grid" aria-label="Featured security research">
         <a class="featured-card" href="/posts/{featured_slug}.html">
-          <p class="section-label">Featured Research</p>
+          <p class="section-label">Featured</p>
           <h2>{html.escape(redact(featured.get("title", "")))}</h2>
           <p>{html.escape(_post_summary(featured))}</p>
           <div class="meta">

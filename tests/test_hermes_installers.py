@@ -99,7 +99,7 @@ def test_tracked_website_copies_are_identical_and_contain_hermes_tab() -> None:
     assert "DOC-SECOPS-AI-001" not in text
     assert "ISSUE 2026-07" not in text
     assert "LANGUAGE: EN (STE)" not in text
-    assert "PLATFORMS" in text
+    assert ">Platforms<" in text
     assert "Local-first · No log shipping by default" in text
     assert "Open source · MIT licensed" in text
 

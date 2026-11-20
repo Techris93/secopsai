@@ -37,7 +37,7 @@ def main() -> int:
 
     if "mini-shai-hulud-emergency-advisory.html" not in index:
         raise AssertionError("index does not link the Mini Shai-Hulud post")
-    for marker in ["Security Research & Advisories", "Intelligence Categories", "Featured Research", "Follow SecOpsAI advisories and research", "Traditional syndication", "Structured automation"]:
+    for marker in ["Security research and advisories", '<h2 class="topic-heading">Topics</h2>', 'class="section-label">Featured<', 'id="subscribe-heading">Subscribe<', "RSS 2.0 for feed readers", "JSON Feed 1.1 for scripts"]:
         if marker not in index:
             raise AssertionError(f"blog index missing advanced blog marker: {marker}")
     for marker in [

@@ -261,7 +261,6 @@ button.button {
 .section-kicker,
 .topic-card-top,
 .command-chip {
-  font-family: var(--mono);
   font-size: 12px;
 }
 .feed-url {
@@ -277,7 +276,6 @@ button.button {
 .copy-url {
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.1em;
   border: 1px solid var(--rule-dark);
   background: var(--panel);
   color: var(--ink-2);
@@ -367,7 +365,6 @@ button.button {
 .tags { margin-top: 10px; gap: 6px; }
 .pill {
   font-size: 10px;
-  letter-spacing: 0.1em;
   padding: 2px 7px;
   border: 1px solid currentColor;
   border-radius: var(--radius);
@@ -568,7 +565,6 @@ button.button {
 .footer-top span,
 .footer-bottom span,
 .copyright {
-  font-family: var(--mono);
   font-size: 11px;
 }
 .footer-top > div,
