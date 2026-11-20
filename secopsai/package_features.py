@@ -469,6 +469,13 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # npm packages in that snapshot. The benchmark clean set is not the registry.
     ("BEH_NPM_RAW_IP_URL", ("npm",), (("raw_ip_url",),), 60),  # +6 held-out samples / 5 packages
     ("BEH_NPM_SMALL_HTTP_SEND", ("npm",), (("http_send",), SMALL_PACKAGE), 60),  # +19 held-out samples / 15 packages
+    # Rule Lab issue #298, run 43869556635 (selection on pre-2026 samples only).
+    # Three of five proposals kept; none hit a popular clean package. Dropped:
+    # PyPI hex_blob (no held-out gain, fires on cryptography) and PyPI
+    # telegram_bot (fires on tqdm, which ships a Telegram integration).
+    ("BEH_NPM_SHELL_TELEGRAM", ("npm",), (("child_process",), ("telegram_bot",)), 60),  # +6 held-out samples / 4 packages
+    ("BEH_NPM_INSTALL_DNS_LOOKUP", ("npm",), (("dns_lookup",), ("install_hook",), SMALL_PACKAGE), 60),  # +1 / 1
+    ("BEH_PYPI_RAW_IP_URL", ("pypi",), (("raw_ip_url",),), 60),  # +13 held-out samples / 6 packages
     # Python start-up hooks (.pth). agent-framework 1.26.1/1.26.2 (2026-11-17):
     # a .pth imported a module that read secrets from every process's
     # environment, requested Azure and GitHub OIDC tokens, and posted them out.
