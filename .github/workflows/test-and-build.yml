@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, develop]
     tags: ["v*"]
+    # Blog publish commits (deploy key, blog/** only) are verified by the
+    # blog workflows before they push; skip a full test + container rebuild.
+    paths-ignore: ["blog/**"]
   pull_request:
     branches: [main, develop]
   schedule:

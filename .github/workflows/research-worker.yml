@@ -346,6 +346,8 @@ jobs:
           python -m pytest tests/test_blog.py -q
 
       - name: Commit and deploy
+        env:
+          BLOG_PUBLISH_DEPLOY_KEY: ${{ secrets.BLOG_PUBLISH_DEPLOY_KEY }}
         run: |
           set -euo pipefail
           git config user.name "secopsai-blog-ops[bot]"
@@ -359,7 +361,7 @@ jobs:
             pushed=0
             for attempt in 1 2 3; do
               git fetch origin main
-              if git rebase --autostash origin/main && git push origin HEAD:main; then pushed=1; break; fi
+              if git rebase --autostash origin/main && scripts/ci/push_main.sh; then pushed=1; break; fi
               git rebase --abort 2>/dev/null || true
               sleep "$attempt"
             done
