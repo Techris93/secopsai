@@ -3407,19 +3407,16 @@ def _feed_icon(kind: str) -> str:
             </svg>"""
 
 
-def _render_feed_card(*, kind: str, title: str, subtitle: str, heading: str, body: str, url: str, href: str) -> str:
+def _render_feed_card(*, kind: str, title: str, subtitle: str, url: str, href: str) -> str:
     return f"""<article class="feed-card">
-          <div class="feed-card-bar" aria-hidden="true"></div>
           <div class="feed-card-body">
             <div class="feed-card-head">
               <div class="feed-icon">{_feed_icon(kind)}</div>
               <div>
-                <span class="feed-choice-kicker">{html.escape(title)}</span>
+                <h3>{html.escape(title)}</h3>
                 <p>{html.escape(subtitle)}</p>
               </div>
             </div>
-            <h3>{html.escape(heading)}</h3>
-            <p>{html.escape(body)}</p>
             <div class="feed-url-row">
               <a class="feed-url" href="{html.escape(href)}">
                 <span aria-hidden="true">⌁</span>
@@ -3449,18 +3446,16 @@ def _render_category_cards(posts: Optional[List[Dict[str, Any]]] = None) -> str:
             # Empty categories made a young blog look abandoned; show only
             # categories that have published posts.
             continue
-        body = f"{count} post{'s' if count != 1 else ''} with SecOpsAI context, detections, or operator guidance."
         cards.append(
             f"""<article class="topic-card">
               <div class="topic-card-top">
-                <span>{html.escape(topic.upper())}</span>
+                <span>{html.escape(topic)}</span>
                 <span>{count} post{'s' if count != 1 else ''}</span>
               </div>
-              <p>{html.escape(body)}</p>
             </article>"""
         )
     return f"""<section class="topic-catalog" id="topics" aria-label="Intelligence categories">
-        <div class="section-kicker"><span></span>Intelligence Categories</div>
+        <h2 class="topic-heading">Topics</h2>
         <div class="topic-grid">{''.join(cards)}</div>
       </section>"""
 
@@ -3470,28 +3465,22 @@ def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str
         <div class="shell">
         <div class="subscribe-top">
           <div>
-            <p class="section-label">Subscribe</p>
-            <h2 id="subscribe-heading">Follow SecOpsAI advisories and research.</h2>
+            <h2 id="subscribe-heading">Subscribe</h2>
           </div>
-          <p>Subscribe through your preferred feed reader, security workflow, or automation platform. Both feeds update simultaneously.</p>
         </div>
         <div class="section-divider" aria-hidden="true"></div>
         <div class="feed-choice-grid">
           {_render_feed_card(
               kind="rss",
               title="RSS Feed",
-              subtitle="XML-based syndication",
-              heading="Traditional syndication",
-              body="For feed readers, email digests, Slack RSS integrations, and news aggregators. Standard RSS 2.0 format.",
+              subtitle="RSS 2.0 for feed readers and email digests",
               url=f"{BASE_URL}/feed.xml",
               href="/feed.xml",
           )}
           {_render_feed_card(
               kind="json",
               title="JSON Feed",
-              subtitle="JSON-based automation",
-              heading="Structured automation",
-              body="For applications, scripts, SOAR platforms, and security automation that prefer structured JSON data.",
+              subtitle="JSON Feed 1.1 for scripts and SOAR platforms",
               url=f"{BASE_URL}/feed.json",
               href="/json-feed",
           )}
@@ -3750,7 +3739,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -3765,7 +3754,6 @@ def _render_post_html(post: Dict[str, Any]) -> str:
         <div class="breadcrumb">
           <a href="/">Blog Home</a><span>&gt;</span><span>{title}</span>
         </div>
-        <p class="eyebrow">{severity.upper()} • SecOpsAI Intelligence</p>
         <h1>{title}</h1>
         <p class="dek">{summary}</p>
         <div class="meta">
@@ -3977,9 +3965,8 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           </div>
         </a>
         <a class="card intelligence-card" href="https://docs.secopsai.dev/research-operations/">
-          <p class="section-label">How we research</p>
-          <h2>Source-backed. Detection-aware. Mitigation-first.</h2>
-          <p>How we take a package from first signal to evidence, verdict, review and publication.</p>
+          <h2>How we research</h2>
+          <p>How a package goes from first signal to evidence, verdict, review and publication.</p>
           <span class="card-cta">Read our research method &rarr;</span>
         </a>
       </section>"""
@@ -4008,7 +3995,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -4023,16 +4010,13 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <main>
       <section class="hero">
         <div class="shell">
-          <p class="eyebrow">Security Research & Advisories</p>
-          <h1>Security intelligence operators can act on quickly.</h1>
-          <p class="lede">Fast incident posts from the SecOpsAI side of the console:
-            affected packages, IOCs, detection logic, mitigations, timelines,
-            and source-backed updates.</p>
+          <h1>Security research and advisories</h1>
+          <p class="lede">Malicious packages and supply-chain incidents: affected versions,
+            IOCs, detection logic and mitigations.</p>
           <div class="feed-actions">
             <a class="button" href="#subscribe">Subscribe</a>
             <a class="button secondary" href="/json-feed">JSON Feed</a>
           </div>
-          <div class="scroll-indicator" aria-hidden="true"></div>
         </div>
       </section>
       <div class="content-section">
@@ -4137,7 +4121,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -4224,7 +4208,7 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -4271,7 +4255,7 @@ def _render_not_found_page() -> str:
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -4359,7 +4343,7 @@ def _advisory_page(*, title: str, description: str, canonical: str, body: str) -
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>

@@ -80,9 +80,10 @@ class BlogPublishingTests(unittest.TestCase):
             json_landing = (paths.root / "json-feed.html").read_text(encoding="utf-8")
             post_html = Path(published["post_path"]).read_text(encoding="utf-8")
             self.assertIn("Featured Research", index)
-            self.assertIn("Follow SecOpsAI advisories and research", index)
-            self.assertIn("Traditional syndication", index)
-            self.assertIn("Structured automation", index)
+            self.assertIn('<h2 id="subscribe-heading">Subscribe</h2>', index)
+            self.assertIn("RSS 2.0 for feed readers", index)
+            self.assertIn("JSON Feed 1.1 for scripts", index)
+            self.assertNotIn("Source-backed. Detection-aware. Mitigation-first.", index)
             self.assertIn('<section class="hero">\n        <div class="shell">', index)
             self.assertIn('<div class="content-section">\n        <div class="shell">', index)
             self.assertIn(
