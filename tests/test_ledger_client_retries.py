@@ -54,6 +54,22 @@ def test_alert_digest_reads_a_day_with_a_long_timeout_and_one_retry(monkeypatch)
     assert seen == [120, 120]
 
 
+def test_alert_digest_follows_the_cursor_through_every_page_of_a_day(monkeypatch):
+    module = _script("alert_digest")
+    pages = {"": {"entries": [{"alert_id": "a"}], "cursor": "c/1+"},
+             "c%2F1%2B": {"entries": [{"alert_id": "b"}], "cursor": "c2"},
+             "c2": {"entries": [{"alert_id": "c"}], "cursor": None}}
+    urls = []
+
+    def page(url, *, token="", accept="application/json", timeout=30):
+        urls.append(url)
+        return pages[url.partition("?cursor=")[2]]
+
+    monkeypatch.setattr(module, "_get", page)
+    assert [e["alert_id"] for e in module._digest_day("2026-11-19", "token")["entries"]] == ["a", "b", "c"]
+    assert urls[0].endswith("/digest/2026-11-19") and len(urls) == 3
+
+
 def test_alert_digest_starts_from_the_last_successful_run(monkeypatch):
     from datetime import datetime, timezone
     module = _script("alert_digest")

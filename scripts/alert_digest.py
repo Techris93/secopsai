@@ -31,16 +31,30 @@ def _get(url: str, *, token: str = "", accept: str = "application/json", timeout
         return json.loads(response.read())
 
 
-def _digest_day(day: str, token: str) -> dict:
-    """A busy day is thousands of entries; allow for a slow read and one retry."""
+def _digest_page(url: str, token: str) -> dict:
+    """One page of a day; allow for a slow read and one retry."""
     for attempt in range(2):
         try:
-            return _get(f"{STORE}/digest/{day}", token=token, timeout=120)
+            return _get(url, token=token, timeout=120)
         except (TimeoutError, OSError):
             if attempt:
                 raise
             time.sleep(10)
     return {}
+
+
+def _digest_day(day: str, token: str) -> dict:
+    """A busy day is thousands of entries, served a page at a time (follow ``cursor``)."""
+    entries: list = []
+    cursor = ""
+    for _ in range(400):  # 100,000 entries at 250 a page
+        query = "?cursor=" + urllib.parse.quote(cursor, safe="") if cursor else ""
+        page = _digest_page(f"{STORE}/digest/{day}{query}", token)
+        entries += page.get("entries") or []
+        cursor = page.get("cursor") or ""
+        if not cursor:
+            break
+    return {"entries": entries}
 
 
 def _last_digest() -> Optional[datetime]:
