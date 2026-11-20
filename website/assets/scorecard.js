@@ -3,6 +3,10 @@
   "use strict";
   var SOURCE = "https://ledger.secopsai.dev/public/frontier-scorecard";
   var LABELS = { "pass": "Pass", "fail": "Fail", "not measured": "Not measured" };
+  // Display names for phase headings. eval/frontier/targets.json is the
+  // pre-registration whose SHA-256 this page publishes, so it is never edited
+  // for wording; renamed phases are mapped here instead.
+  var PHASE_TITLES = { "phase-6": "Agent tool registries" };
   var CLASSES = { "pass": "pass", "fail": "fail", "not measured": "none" };
 
   function el(tag, attrs, text) {
@@ -54,7 +58,7 @@
       var section = el("section");
       var heading = el("h2");
       heading.appendChild(el("span", { "class": "id" }, phase.id.replace("phase-", "")));
-      heading.appendChild(document.createTextNode(phase.title));
+      heading.appendChild(document.createTextNode(PHASE_TITLES[phase.id] || phase.title));
       section.appendChild(heading);
       var wrap = el("div", { "class": "table-wrap" });
       var table = el("table");
