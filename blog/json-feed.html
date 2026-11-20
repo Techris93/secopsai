@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -19,7 +19,7 @@
       <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
           <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SECOPSAI</span><span>JSON FEED</span></span>
+          <span class="brand-title"><span>SecOpsAI</span><span>JSON Feed</span></span>
         </a>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
           <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -50,15 +50,12 @@
         <div class="shell">
         <div class="subscribe-top">
           <div>
-            <p class="section-label">Subscribe</p>
-            <h2 id="subscribe-heading">Follow SecOpsAI advisories and research.</h2>
+            <h2 id="subscribe-heading">Subscribe</h2>
           </div>
-          <p>Subscribe through your preferred feed reader, security workflow, or automation platform. Both feeds update simultaneously.</p>
         </div>
         <div class="section-divider" aria-hidden="true"></div>
         <div class="feed-choice-grid">
           <article class="feed-card">
-          <div class="feed-card-bar" aria-hidden="true"></div>
           <div class="feed-card-body">
             <div class="feed-card-head">
               <div class="feed-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -67,12 +64,10 @@
               <circle cx="5" cy="19" r="1.5" />
             </svg></div>
               <div>
-                <span class="feed-choice-kicker">RSS Feed</span>
-                <p>XML-based syndication</p>
+                <h3>RSS Feed</h3>
+                <p>RSS 2.0 for feed readers and email digests</p>
               </div>
             </div>
-            <h3>Traditional syndication</h3>
-            <p>For feed readers, email digests, Slack RSS integrations, and news aggregators. Standard RSS 2.0 format.</p>
             <div class="feed-url-row">
               <a class="feed-url" href="/feed.xml">
                 <span aria-hidden="true">⌁</span>
@@ -88,7 +83,6 @@
           </div>
         </article>
           <article class="feed-card">
-          <div class="feed-card-bar" aria-hidden="true"></div>
           <div class="feed-card-body">
             <div class="feed-card-head">
               <div class="feed-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -97,12 +91,10 @@
               <line x1="10" y1="21" x2="14" y2="3" />
             </svg></div>
               <div>
-                <span class="feed-choice-kicker">JSON Feed</span>
-                <p>JSON-based automation</p>
+                <h3>JSON Feed</h3>
+                <p>JSON Feed 1.1 for scripts and SOAR platforms</p>
               </div>
             </div>
-            <h3>Structured automation</h3>
-            <p>For applications, scripts, SOAR platforms, and security automation that prefer structured JSON data.</p>
             <div class="feed-url-row">
               <a class="feed-url" href="/json-feed">
                 <span aria-hidden="true">⌁</span>
@@ -119,37 +111,32 @@
         </article>
         </div>
         <section class="topic-catalog" id="topics" aria-label="Intelligence categories">
-        <div class="section-kicker"><span></span>Intelligence Categories</div>
+        <h2 class="topic-heading">Topics</h2>
         <div class="topic-grid"><article class="topic-card">
               <div class="topic-card-top">
-                <span>ORIGINAL RESEARCH</span>
+                <span>Original Research</span>
                 <span>2 posts</span>
               </div>
-              <p>2 posts with SecOpsAI context, detections, or operator guidance.</p>
             </article><article class="topic-card">
               <div class="topic-card-top">
-                <span>THREAT INTELLIGENCE</span>
+                <span>Threat Intelligence</span>
                 <span>13 posts</span>
               </div>
-              <p>13 posts with SecOpsAI context, detections, or operator guidance.</p>
             </article><article class="topic-card">
               <div class="topic-card-top">
-                <span>SUPPLY CHAIN</span>
+                <span>Supply Chain</span>
                 <span>3 posts</span>
               </div>
-              <p>3 posts with SecOpsAI context, detections, or operator guidance.</p>
             </article><article class="topic-card">
               <div class="topic-card-top">
-                <span>DETECTION ENGINEERING</span>
+                <span>Detection Engineering</span>
                 <span>3 posts</span>
               </div>
-              <p>3 posts with SecOpsAI context, detections, or operator guidance.</p>
             </article><article class="topic-card">
               <div class="topic-card-top">
-                <span>MITIGATION</span>
+                <span>Mitigation</span>
                 <span>1 post</span>
               </div>
-              <p>1 post with SecOpsAI context, detections, or operator guidance.</p>
             </article></div>
       </section>
         </div>
@@ -237,13 +224,8 @@
     </main>
     <footer class="footer">
       <div class="shell footer-inner">
-        <div class="footer-top">
-          <div><span>SecOpsAI</span><span>Security Blog</span></div>
-          <span>Operator feed</span>
-        </div>
-        <p>New SecOpsAI detections, package advisories, OpenClaw telemetry learnings, malware behavior cards, and practical response notes.</p>
         <div class="footer-bottom">
-          <div><span>SecOpsAI Security Blog</span><span>Local-first intelligence, source-backed actions.</span></div>
+          <div><span>SecOpsAI Security Blog</span></div>
           <nav aria-label="Footer links">
             <a href="https://secopsai.dev/">Platform</a>
             <a href="/#topics">Topics</a>
