@@ -113,7 +113,6 @@ export async function firewallShard(request, env, ecosystem, shard) {
 // Alert digest: one object per held-back alert per day, written by the Fast
 // Lane and the research worker, read once a day by scripts/alert_digest.py.
 const DIGEST_MAX_ENTRIES = 100;
-const DIGEST_MAX_READ = 3000;
 
 async function digestKey(day, entry) {
   const bytes = new TextEncoder().encode(`${entry.source}|${entry.alert_id}`);
@@ -144,22 +143,17 @@ export async function digestAdd(request, env) {
   return json({ status: "stored", stored });
 }
 
-// Reads run in parallel batches: one get per alert, and a busy day holds
-// thousands, which read one by one outlasted the digest client's timeout.
+// A day is read in pages: one list call and up to DIGEST_PAGE gets per
+// request. R2 gets in one invocation ran close to one at a time (~40 ms each),
+// so a busy day read whole outlasted the client's 120 s timeout (#301), and
+// the old 3,000-entry cap could drop entries silently. The client follows
+// `cursor` until it is null.
+const DIGEST_PAGE = 250;
 const DIGEST_READ_BATCH = 50;
 
-export async function digestRead(env, day) {
-  const keys = [];
-  let cursor;
-  let truncated = false;
-  do {
-    const page = await env.LEDGER.list({ prefix: `digest/${day}/`, cursor, limit: 1000 });
-    for (const object of page.objects) {
-      if (keys.length >= DIGEST_MAX_READ) { truncated = true; break; }
-      keys.push(object.key);
-    }
-    cursor = page.truncated && !truncated ? page.cursor : undefined;
-  } while (cursor);
+export async function digestRead(env, day, cursor) {
+  const page = await env.LEDGER.list({ prefix: `digest/${day}/`, cursor: cursor || undefined, limit: DIGEST_PAGE });
+  const keys = page.objects.map((object) => object.key);
   const entries = [];
   for (let index = 0; index < keys.length; index += DIGEST_READ_BATCH) {
     const items = await Promise.all(keys.slice(index, index + DIGEST_READ_BATCH).map(async key => {
@@ -169,7 +163,7 @@ export async function digestRead(env, day) {
     }));
     for (const item of items) if (item) entries.push(item);
   }
-  return json({ day, entries, truncated });
+  return json({ day, entries, cursor: page.truncated && page.cursor ? page.cursor : null });
 }
 
 // Public frontier scorecard: the one object anyone may read (aggregate
@@ -361,7 +355,9 @@ export default {
       if (!isOwner) return json({ error: "unauthorized" }, 401);
       if (url.pathname === "/digest/add") return digestAdd(request, env);
       if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
-      return digestRead(env, url.pathname.slice("/digest/".length));
+      const cursor = url.searchParams.get("cursor") || "";
+      if (cursor.length > 1024) return json({ error: "invalid cursor" }, 400);
+      return digestRead(env, url.pathname.slice("/digest/".length), cursor);
     }
     if (url.pathname === "/public/frontier-scorecard") {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);

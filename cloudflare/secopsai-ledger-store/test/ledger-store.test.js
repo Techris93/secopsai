@@ -562,5 +562,40 @@ test("digest entries are owner-only, one per alert per day, and read back by day
   await call("POST", "/digest/add", JSON.stringify({ entries: [{ ...entry, alert_id: "b2", occurred_at: "2026-11-16T01:00:00Z" }] }));
   const day = await (await call("GET", "/digest/2026-11-15")).json();
   assert.deepEqual(day.entries.map((item) => [item.alert_id, item.severity]), [["a1", "critical"]]);
+  assert.equal(day.cursor, null);
   assert.equal((await call("GET", "/digest/2026-11-15", undefined, "wrong")).status, 401);
+});
+
+test("a busy digest day is read in pages that together return every entry", async () => {
+  const store = new Map();
+  const bucket = {
+    get: async (key) => store.has(key) ? { text: async () => store.get(key) } : null,
+    put: async (key, body) => { store.set(key, body); },
+    list: async ({ prefix, cursor, limit }) => {
+      const keys = [...store.keys()].filter((key) => key.startsWith(prefix)).sort();
+      const start = cursor ? Number(cursor) : 0;
+      const next = start + limit;
+      return { objects: keys.slice(start, next).map((key) => ({ key })), truncated: next < keys.length, cursor: next < keys.length ? String(next) : undefined };
+    },
+  };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const call = (path) => worker.fetch(new Request(`https://ls.example${path}`, { headers: { authorization: "Bearer secret" } }), env);
+  for (let start = 0; start < 3600; start += 100) {
+    const entries = Array.from({ length: 100 }, (_, offset) => ({ source: "fast_lane", alert_id: `a${start + offset}`, occurred_at: "2026-11-17T10:00:00Z" }));
+    assert.equal((await worker.fetch(new Request("https://ls.example/digest/add", { method: "POST", body: JSON.stringify({ entries }),
+      headers: { authorization: "Bearer secret" } }), env)).status, 200);
+  }
+  const seen = new Set();
+  let cursor = "";
+  let pages = 0;
+  do {
+    const page = await (await call(`/digest/2026-11-17${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`)).json();
+    assert.ok(page.entries.length <= 250, "a page is bounded");
+    page.entries.forEach((item) => seen.add(item.alert_id));
+    cursor = page.cursor;
+    pages += 1;
+  } while (cursor);
+  assert.equal(seen.size, 3600, "more than the old 3,000 cap, none dropped");
+  assert.equal(pages, Math.ceil(3600 / 250));
+  assert.equal((await call(`/digest/2026-11-17?cursor=${"x".repeat(1025)}`)).status, 400);
 });
