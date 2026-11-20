@@ -144,19 +144,31 @@ export async function digestAdd(request, env) {
   return json({ status: "stored", stored });
 }
 
+// Reads run in parallel batches: one get per alert, and a busy day holds
+// thousands, which read one by one outlasted the digest client's timeout.
+const DIGEST_READ_BATCH = 50;
+
 export async function digestRead(env, day) {
-  const entries = [];
+  const keys = [];
   let cursor;
   let truncated = false;
   do {
     const page = await env.LEDGER.list({ prefix: `digest/${day}/`, cursor, limit: 1000 });
     for (const object of page.objects) {
-      if (entries.length >= DIGEST_MAX_READ) { truncated = true; break; }
-      const item = await env.LEDGER.get(object.key);
-      if (item) { try { entries.push(JSON.parse(await item.text())); } catch { /* skip a damaged entry */ } }
+      if (keys.length >= DIGEST_MAX_READ) { truncated = true; break; }
+      keys.push(object.key);
     }
     cursor = page.truncated && !truncated ? page.cursor : undefined;
   } while (cursor);
+  const entries = [];
+  for (let index = 0; index < keys.length; index += DIGEST_READ_BATCH) {
+    const items = await Promise.all(keys.slice(index, index + DIGEST_READ_BATCH).map(async key => {
+      const item = await env.LEDGER.get(key);
+      if (!item) return null;
+      try { return JSON.parse(await item.text()); } catch { return null; } // skip a damaged entry
+    }));
+    for (const item of items) if (item) entries.push(item);
+  }
   return json({ day, entries, truncated });
 }
 
