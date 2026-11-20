@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +31,18 @@ def _get(url: str, *, token: str = "", accept: str = "application/json", timeout
         return json.loads(response.read())
 
 
+def _digest_day(day: str, token: str) -> dict:
+    """A busy day is thousands of entries; allow for a slow read and one retry."""
+    for attempt in range(2):
+        try:
+            return _get(f"{STORE}/digest/{day}", token=token, timeout=120)
+        except (TimeoutError, OSError):
+            if attempt:
+                raise
+            time.sleep(10)
+    return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--out", type=Path, default=Path("reports/alert-digest.json"))
@@ -38,7 +51,7 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     raw = []
     for day in {(now - timedelta(days=1)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")}:
-        raw += _get(f"{STORE}/digest/{day}", token=token).get("entries") or []
+        raw += _digest_day(day, token).get("entries") or []
     entries = alert_digest.window(raw, now)
 
     shards: dict = {}

@@ -126,3 +126,13 @@ def test_public_card_carries_provenance_and_no_rows(monkeypatch):
     assert card["provenance"]["targets_sha256"] == hashlib.sha256(targets_bytes).hexdigest()
     assert {row["outcome"] for row in card["results"]} == {"not measured"}
     assert "rows" not in json.dumps(card)
+
+
+def test_scorecard_renames_phases_without_touching_the_preregistration():
+    root = Path(__file__).resolve().parents[1]
+    targets = json.loads((root / "eval" / "frontier" / "targets.json").read_text(encoding="utf-8"))
+    titles = {phase["id"]: phase["title"] for phase in targets["phases"]}
+    assert titles["phase-6"] == "Beyond world standard"  # pre-registered wording stays
+    page = (root / "www" / "assets" / "scorecard.js").read_text(encoding="utf-8")
+    assert '"phase-6": "Agent tool registries"' in page
+    assert page == (root / "website" / "assets" / "scorecard.js").read_text(encoding="utf-8")

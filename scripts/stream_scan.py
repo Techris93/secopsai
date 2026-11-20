@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -27,6 +28,21 @@ STORE = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip
 
 
 def _store(method: str, name: str, value: Any = None) -> Dict[str, Any]:
+    """GET or PUT one ledger object. Both are idempotent, so a dropped
+    connection or timeout is retried twice before the run fails."""
+    for attempt in range(3):
+        try:
+            return _store_once(method, name, value)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
+    return {}
+
+
+def _store_once(method: str, name: str, value: Any = None) -> Dict[str, Any]:
     token = os.environ["LEDGER_STORE_TOKEN"]
     data = None if value is None else json.dumps(value, separators=(",", ":")).encode()
     request = urllib.request.Request(f"{STORE}/stream/{name}", data=data, method=method,
