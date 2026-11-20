@@ -1,0 +1,73 @@
+name: Fast Lane Gate Replay
+
+# Runs the frozen Fast Lane behaviour-floor test (eval/fast_lane_gate/PLAN.md)
+# over the ledger's digest entries. Reads only: no model calls, no email, no
+# package downloads, and nothing in the Fast Lane changes. selection runs from
+# 2026-12-02 and writes the V2 keep-list; held_out runs once from 2026-12-09.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: selection (from 2026-12-02) or held_out (from 2026-12-09)
+        type: choice
+        options: [selection, held_out]
+        default: selection
+      benchmark_run:
+        description: Successful Recall Benchmark run on main (seed 20261010)
+        required: true
+      extensions:
+        description: Held-out extensions under A3 (0-2)
+        default: "0"
+
+permissions:
+  contents: read
+  # Downloads the recall-benchmark artifact of the given run.
+  actions: read
+
+concurrency:
+  group: fast-lane-gate-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      MODE: ${{ inputs.mode }}
+      BENCHMARK_RUN: ${{ inputs.benchmark_run }}
+      EXTENSIONS: ${{ inputs.extensions }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Fetch the benchmark rows
+        run: |
+          [[ "$BENCHMARK_RUN" =~ ^[0-9]+$ ]] || { echo "benchmark_run must be a run id"; exit 1; }
+          [[ "$EXTENSIONS" =~ ^[0-2]$ ]] || { echo "extensions must be 0, 1 or 2"; exit 1; }
+          read -r name branch conclusion < <(gh run view "$BENCHMARK_RUN" --repo "$GITHUB_REPOSITORY" \
+            --json workflowName,headBranch,conclusion -q '"\(.workflowName|gsub(" ";"_")) \(.headBranch) \(.conclusion)"')
+          [[ "$name" == "Recall_Benchmark" && "$branch" == "main" && "$conclusion" == "success" ]] \
+            || { echo "run $BENCHMARK_RUN is $name on $branch ($conclusion), not a successful Recall Benchmark on main"; exit 1; }
+          gh run download "$BENCHMARK_RUN" --repo "$GITHUB_REPOSITORY" -n recall-benchmark -D "$RUNNER_TEMP/bench"
+      - name: Replay
+        run: >-
+          python scripts/fast_lane_gate_replay.py --mode "$MODE" --extensions "$EXTENSIONS"
+          --benchmark "$RUNNER_TEMP/bench/recall-benchmark.json"
+          --out reports/fast-lane-gate.json --keep-out reports/v2-keep-list.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fast-lane-gate-${{ inputs.mode }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 90
