@@ -3455,7 +3455,22 @@ def _render_category_cards(posts: Optional[List[Dict[str, Any]]] = None) -> str:
       </section>"""
 
 
-def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str:
+def _render_email_signup() -> str:
+    # The note is the consent boundary (what is sent and how to stop it), not a tagline.
+    return """<form class="email-signup" data-subscribe-form novalidate>
+          <label class="email-signup-label" for="subscribe-email">Get new posts by email</label>
+          <div class="email-signup-row">
+            <input id="subscribe-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="you@example.com" required />
+            <button class="button" type="submit">Subscribe</button>
+          </div>
+          <input class="email-signup-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+          <div class="email-signup-check" data-subscribe-turnstile hidden></div>
+          <p class="email-signup-note">One email per new post. Every email has an unsubscribe link.</p>
+          <p class="email-signup-status" data-subscribe-status role="status" aria-live="polite"></p>
+        </form>"""
+
+
+def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None, *, topics: bool = True) -> str:
     return f"""<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">
         <div class="shell">
         <div class="subscribe-top">
@@ -3463,6 +3478,7 @@ def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str
             <h2 id="subscribe-heading">Subscribe</h2>
           </div>
         </div>
+        {_render_email_signup()}
         <div class="section-divider" aria-hidden="true"></div>
         <div class="feed-choice-grid">
           {_render_feed_card(
@@ -3470,7 +3486,7 @@ def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str
               title="RSS Feed",
               subtitle="RSS 2.0 for feed readers and email digests",
               url=f"{BASE_URL}/feed.xml",
-              href="/feed.xml",
+              href="/feed.xml?raw=1",
           )}
           {_render_feed_card(
               kind="json",
@@ -3480,7 +3496,7 @@ def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str
               href="/json-feed",
           )}
         </div>
-        {_render_category_cards(posts)}
+        {_render_category_cards(posts) if topics else ""}
         </div>
       </section>"""
 
@@ -3683,6 +3699,17 @@ def _render_ioc_card(post: Dict[str, Any]) -> str:
         </section>"""
 
 
+def _post_body_html(post: Dict[str, Any]) -> str:
+    """The article body of a public post, as rendered on its page and in the JSON Feed."""
+    public_hashes = tuple(str(value) for value in post.get("iocs") or [] if re.fullmatch(r"[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}", str(value)))
+    token = _PUBLIC_HASHES.set(public_hashes)
+    try:
+        brief_html = _render_brief_body(str(post.get("body_markdown") or "")) if post.get("layout") == BRIEF_LAYOUT else None
+        return brief_html or _wrap_tldr(markdown_to_html(str(post.get("body_markdown") or "")))
+    finally:
+        _PUBLIC_HASHES.reset(token)
+
+
 def _render_post_html(post: Dict[str, Any]) -> str:
     post = _public_post(post)
     slug = str(post["slug"])
@@ -3696,13 +3723,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     severity_class = _badge_class(post.get("severity"))
     author = html.escape(_post_author(post))
     reading_time = _post_reading_time(post)
-    public_hashes = tuple(str(value) for value in post.get("iocs") or [] if re.fullmatch(r"[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}", str(value)))
-    token = _PUBLIC_HASHES.set(public_hashes)
-    try:
-        brief_html = _render_brief_body(str(post.get("body_markdown") or "")) if post.get("layout") == BRIEF_LAYOUT else None
-        body_html = brief_html or _wrap_tldr(markdown_to_html(str(post.get("body_markdown") or "")))
-    finally:
-        _PUBLIC_HASHES.reset(token)
+    body_html = _post_body_html(post)
     social_image = str(post.get("social_image") or _social_card_src(slug))
     social_alt = str(post.get("social_image_alt") or f"SecOpsAI social preview card for {raw_title}")
     hero_media = _render_hero_media(post)
@@ -4024,6 +4045,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     </main>
     {_render_site_footer()}
     <script src="/assets/blog.js" defer></script>
+    <script src="/assets/subscribe.js" defer></script>
   </body>
 </html>
 """
@@ -4230,6 +4252,76 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
       <section class="shell latest-grid">{items}</section>
     </main>
     {_render_site_footer()}
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/subscribe.js" defer></script>
+  </body>
+</html>
+"""
+
+
+def _render_subscribe_page() -> str:
+    """Served at /subscribe and, to browsers, at /feed.xml: browsers no longer style RSS with XSLT."""
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subscribe · SecOpsAI Security Blog</title>
+    <meta name="description" content="Get SecOpsAI Security Blog posts by email, RSS or JSON Feed." />
+    <link rel="canonical" href="{BASE_URL}/subscribe" />
+    <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    {_render_site_header()}
+    <main>
+      {_render_subscribe_panel(topics=False)}
+    </main>
+    {_render_site_footer()}
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/subscribe.js" defer></script>
+  </body>
+</html>
+"""
+
+
+SUBSCRIBE_STATUS_SLOTS = ("__STATUS_TITLE__", "__STATUS_MESSAGE__", "__STATUS_FORM__")
+
+
+def _render_subscribe_status_template() -> str:
+    """Page shell for the confirm and unsubscribe links; the Pages worker fills the slots."""
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__STATUS_TITLE__ · SecOpsAI Security Blog</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    {_render_site_header()}
+    <main>
+      <section class="hero">
+        <div class="shell">
+          <h1>__STATUS_TITLE__</h1>
+          <p class="lede">__STATUS_MESSAGE__</p>
+          <div class="feed-actions">__STATUS_FORM__<a class="button secondary" href="/">Blog home</a></div>
+        </div>
+      </section>
+    </main>
+    {_render_site_footer()}
+    <script src="/assets/blog.js" defer></script>
   </body>
 </html>
 """
@@ -4450,8 +4542,10 @@ def _write_site_metadata(posts: List[Dict[str, Any]], paths: BlogPaths) -> List[
     well_known.mkdir(parents=True, exist_ok=True)
     outputs = {
         paths.root / "404.html": _render_not_found_page(),
+        paths.root / "subscribe.html": _render_subscribe_page(),
+        paths.root / "subscribe-status.html": _render_subscribe_status_template(),
         paths.root / "robots.txt": f"User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {BASE_URL}/sitemap.xml\n",
-        paths.root / "sitemap.xml": _render_sitemap(posts, _advisory_sitemap_entries(paths)),
+        paths.root / "sitemap.xml": _render_sitemap(posts, [(f"{BASE_URL}/subscribe", ""), *_advisory_sitemap_entries(paths)]),
         well_known / "security.txt": _render_security_txt(),
     }
     for path, content in outputs.items():
@@ -4498,6 +4592,8 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
                 "url": url,
                 "title": redact(post.get("title", "")),
                 "summary": summary,
+                # JSON Feed 1.1 requires content_html or content_text on every item.
+                "content_html": re.sub(r'(\s(?:href|src)=")/(?!/)', rf"\1{BASE_URL}/", _post_body_html(post)),
                 "image": _absolute_url(post.get("social_image") or _social_card_src(slug)),
                 "banner_image": _absolute_url(post.get("social_image") or _social_card_src(slug)),
                 "date_published": post.get("published_at"),
@@ -4535,11 +4631,13 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     rss_body = "\n".join(rss_items)
     rss_xml = (
         '<?xml version="1.0" encoding="UTF-8" ?>\n'
-        '<?xml-stylesheet type="text/xsl" href="/rss.xsl" ?>\n'
-        '<rss version="2.0">\n'
+        # No XSLT stylesheet: browsers dropped XSLT, so the Pages worker sends
+        # browsers the /subscribe page instead and feed readers get this XML.
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n'
         '  <channel>\n'
         '    <title>SecOpsAI Security Blog</title>\n'
         f'    <link>{BASE_URL}/</link>\n'
+        f'    <atom:link href="{BASE_URL}/feed.xml" rel="self" type="application/rss+xml" />\n'
         '    <description>Real-time SecOpsAI advisories, detections, mitigation steps, '
         'and incident updates.</description>\n'
         '    <language>en-us</language>\n'

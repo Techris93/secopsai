@@ -100,8 +100,8 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Set up Node for Wrangler
-        if: ${{ inputs.action == 'deploy' }}
+      # Wrangler and the worker tests (node:sqlite needs Node 22).
+      - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22.23.4"
@@ -204,9 +204,10 @@ jobs:
         run: |
           python scripts/verify_blog.py
           node --check blog/_worker.js
-          node --test tests/js/blog_worker.test.mjs
+          node --test tests/js/blog_worker.test.mjs tests/js/blog_subscribe.test.mjs
           node --check blog/assets/blog.js
           node --check blog/assets/comments.js
+          node --check blog/assets/subscribe.js
           python -m pytest tests/test_blog.py -q
 
       - name: Commit intentional Blog Ops changes
@@ -218,7 +219,7 @@ jobs:
           git config user.name "secopsai-blog-ops[bot]"
           git config user.email "115749095+Techris93@users.noreply.github.com"
 
-          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/sitemap.xml blog/robots.txt blog/.well-known
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/subscribe.html blog/subscribe-status.html blog/sitemap.xml blog/robots.txt blog/.well-known
           git add blog/data/published-posts.json 2>/dev/null || true
           if [ -d blog/assets/posts ]; then
             git add blog/assets/posts
@@ -253,6 +254,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The Resend key the alert digest sends with; the blog's email signup uses it too.
+          RESEND_API_KEY: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
         run: |
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
             echo "Cloudflare deploy secrets are not configured; cannot deploy blog." >&2
@@ -261,6 +264,19 @@ jobs:
           fi
           python -m secopsai.cli blog rebuild-feeds
           python scripts/verify_blog.py
+          # Email signup secrets go in before the deploy so the new deployment has them.
+          # BLOG_NEWSLETTER_SECRET is fresh on every deploy and only authenticates the
+          # "Email new posts" step below, so no long-lived shared secret is stored.
+          newsletter_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${newsletter_secret}"
+          if [ -z "${RESEND_API_KEY:-}" ]; then
+            echo "::warning::SECOPSAI_SMTP_PASSWORD is not set; blog email signup stays unavailable."
+          elif printf '%s' "$RESEND_API_KEY" | npx --yes wrangler@4.131.1 pages secret put RESEND_API_KEY --project-name secopsai-blog \
+            && printf '%s' "$newsletter_secret" | npx --yes wrangler@4.131.1 pages secret put BLOG_NEWSLETTER_SECRET --project-name secopsai-blog; then
+            echo "BLOG_NEWSLETTER_SECRET=${newsletter_secret}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Could not set the blog's email secrets; deploying without changing them."
+          fi
           npx --yes wrangler@4.131.1 pages deploy blog --project-name secopsai-blog --branch main
 
       - name: Mark deployed drafts after successful deploy
@@ -281,7 +297,7 @@ jobs:
             git add -A blog/drafts
             git add -f blog/drafts/*.json 2>/dev/null || true
           fi
-          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/sitemap.xml blog/robots.txt blog/.well-known
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/subscribe.html blog/subscribe-status.html blog/sitemap.xml blog/robots.txt blog/.well-known
           if [ -d blog/assets/posts ]; then
             git add blog/assets/posts
           fi
@@ -305,3 +321,11 @@ jobs:
 
           echo "Unable to push deployed Blog Ops state after rebasing onto origin/main." >&2
           exit 1
+
+      # Emails posts published in the last two days to confirmed subscribers. The
+      # worker records each sent post, so a re-deploy never mails a post twice.
+      # Set the repository variable BLOG_NEWSLETTER_PAUSED=true to stop sending.
+      - name: Email new posts to subscribers
+        if: ${{ inputs.action == 'deploy' && env.BLOG_NEWSLETTER_SECRET != '' && vars.BLOG_NEWSLETTER_PAUSED != 'true' }}
+        continue-on-error: true
+        run: python scripts/blog_newsletter.py

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subscribe · SecOpsAI Security Blog</title>
+    <meta name="description" content="Get SecOpsAI Security Blog posts by email, RSS or JSON Feed." />
+    <link rel="canonical" href="https://blog.secopsai.dev/subscribe" />
+    <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="/">Blog Home</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">
+        <div class="shell">
+        <div class="subscribe-top">
+          <div>
+            <h2 id="subscribe-heading">Subscribe</h2>
+          </div>
+        </div>
+        <form class="email-signup" data-subscribe-form novalidate>
+          <label class="email-signup-label" for="subscribe-email">Get new posts by email</label>
+          <div class="email-signup-row">
+            <input id="subscribe-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="you@example.com" required />
+            <button class="button" type="submit">Subscribe</button>
+          </div>
+          <input class="email-signup-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+          <div class="email-signup-check" data-subscribe-turnstile hidden></div>
+          <p class="email-signup-note">One email per new post. Every email has an unsubscribe link.</p>
+          <p class="email-signup-status" data-subscribe-status role="status" aria-live="polite"></p>
+        </form>
+        <div class="section-divider" aria-hidden="true"></div>
+        <div class="feed-choice-grid">
+          <article class="feed-card">
+          <div class="feed-card-body">
+            <div class="feed-card-head">
+              <div class="feed-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1.5" />
+            </svg></div>
+              <div>
+                <h3>RSS Feed</h3>
+                <p>RSS 2.0 for feed readers and email digests</p>
+              </div>
+            </div>
+            <div class="feed-url-row">
+              <a class="feed-url" href="/feed.xml?raw=1">
+                <span aria-hidden="true">⌁</span>
+                <code>https://blog.secopsai.dev/feed.xml</code>
+              </a>
+              <button class="copy-url" type="button" data-copy="https://blog.secopsai.dev/feed.xml" title="Copy URL" aria-label="Copy RSS Feed URL">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
+                  <rect x="6" y="6" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </article>
+          <article class="feed-card">
+          <div class="feed-card-body">
+            <div class="feed-card-head">
+              <div class="feed-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <polyline points="8 3 4 7 8 11" />
+              <polyline points="16 3 20 7 16 11" />
+              <line x1="10" y1="21" x2="14" y2="3" />
+            </svg></div>
+              <div>
+                <h3>JSON Feed</h3>
+                <p>JSON Feed 1.1 for scripts and SOAR platforms</p>
+              </div>
+            </div>
+            <div class="feed-url-row">
+              <a class="feed-url" href="/json-feed">
+                <span aria-hidden="true">⌁</span>
+                <code>https://blog.secopsai.dev/feed.json</code>
+              </a>
+              <button class="copy-url" type="button" data-copy="https://blog.secopsai.dev/feed.json" title="Copy URL" aria-label="Copy JSON Feed URL">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
+                  <rect x="6" y="6" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </article>
+        </div>
+        
+        </div>
+      </section>
+    </main>
+    <footer class="footer">
+      <div class="shell footer-inner">
+        <div class="footer-bottom">
+          <div><span>SecOpsAI Security Blog</span></div>
+          <nav aria-label="Footer links">
+            <a href="https://secopsai.dev/">Platform</a>
+            <a href="/#topics">Topics</a>
+            <a href="/posts/">Latest</a>
+            <a href="https://docs.secopsai.dev/">Docs</a>
+            <a href="mailto:security@secopsai.dev">Security contact</a>
+            <a href="mailto:research@secopsai.dev">Research contact</a>
+            <a href="/feed.xml">RSS</a>
+            <a href="/json-feed">JSON Feed</a>
+          </nav>
+        </div>
+        <div class="copyright">© 2026 SecOpsAI. All rights reserved.</div>
+      </div>
+    </footer>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/subscribe.js" defer></script>
+  </body>
+</html>

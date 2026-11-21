@@ -27,8 +27,11 @@ def main() -> int:
     post = require(BLOG / "posts" / "mini-shai-hulud-emergency-advisory.html")
     feed_json = json.loads(require(BLOG / "feed.json"))
     feed_xml = require(BLOG / "feed.xml")
-    ET.fromstring(feed_xml.split("?>", 2)[-1] if "<?xml-stylesheet" in feed_xml else feed_xml)
+    rss = ET.fromstring(feed_xml.encode("utf-8"))
     json_landing = require(BLOG / "json-feed.html")
+    subscribe_page = require(BLOG / "subscribe.html")
+    status_template = require(BLOG / "subscribe-status.html")
+    subscribe_js = require(BLOG / "assets" / "subscribe.js")
     require(BLOG / "assets" / "blog.css")
     blog_js = require(BLOG / "assets" / "blog.js")
     comments_js = require(BLOG / "assets" / "comments.js")
@@ -69,8 +72,22 @@ def main() -> int:
         raise AssertionError("post comments form must include the Turnstile mount point")
     if not feed_json.get("items"):
         raise AssertionError("JSON feed has no items")
-    if "<?xml-stylesheet" not in feed_xml:
-        raise AssertionError("RSS feed must include a browser-readable stylesheet")
+    # Browsers dropped XSLT: the worker serves /subscribe to browsers instead.
+    if "<?xml-stylesheet" in feed_xml or (BLOG / "rss.xsl").exists():
+        raise AssertionError("RSS feed must not depend on an XSLT stylesheet")
+    if rss.find("./channel/{http://www.w3.org/2005/Atom}link[@rel='self']") is None:
+        raise AssertionError("RSS feed must declare its own URL with atom:link rel=self")
+    missing_content = [item.get("url") for item in feed_json["items"] if not (item.get("content_html") or item.get("content_text"))]
+    if missing_content:
+        raise AssertionError(f"JSON Feed 1.1 items need content_html or content_text: {missing_content[:3]}")
+    for page_name, page in (("index", index), ("JSON feed landing", json_landing), ("subscribe page", subscribe_page)):
+        if "data-subscribe-form" not in page or "/assets/subscribe.js" not in page:
+            raise AssertionError(f"{page_name} must include the email signup form and its script")
+    for slot in ("__STATUS_TITLE__", "__STATUS_MESSAGE__", "__STATUS_FORM__"):
+        if slot not in status_template:
+            raise AssertionError(f"subscription status template missing slot {slot}")
+    if "/api/subscribe" not in subscribe_js or "turnstile" not in subscribe_js:
+        raise AssertionError("signup client must post to /api/subscribe behind Turnstile")
     if not feed_json["items"][0].get("summary"):
         raise AssertionError("JSON feed items must include summaries")
     if not feed_json["items"][0].get("authors"):
@@ -133,6 +150,9 @@ def main() -> int:
             raise AssertionError(f"security.txt missing RFC 9116 field {field}")
     if "/api/comments" not in worker or "env.ASSETS.fetch" not in worker or "/json-feed" not in worker:
         raise AssertionError("Pages worker must route comments API and static assets")
+    for marker in ['"/api/subscribe"', '"/subscribe/confirm"', '"/unsubscribe"', "List-Unsubscribe-Post", '"/subscribe"', "BLOG_NEWSLETTER_SECRET"]:
+        if marker not in worker:
+            raise AssertionError(f"Pages worker missing email subscription marker: {marker}")
     if "payload too large" not in worker or "content-type must be application/json" not in worker:
         raise AssertionError("comments worker must reject oversized and non-JSON submissions")
     if "TURNSTILE_SECRET_KEY" not in worker or "siteverify" not in worker:
