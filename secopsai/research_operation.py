@@ -240,8 +240,18 @@ def hosted_projection(*, db_path=None) -> dict:
     # worker keeps it current, so the editor can approve it from the console.
     from secopsai.research_editorial import STALE_BRIEF_REFRESH_DAYS
     waiting_since = (datetime.now(ZoneInfo("Europe/Istanbul")).date() - timedelta(days=STALE_BRIEF_REFRESH_DAYS)).isoformat()
+    # Latest approval per edition, so the console shows who approved what and when.
+    approvals: dict[str, dict] = {}
+    for record in records("edition_approval", db_path=db_path, limit=500):
+        approvals.setdefault(str(record["payload"].get("edition_id") or ""), record)
     for index, item in enumerate(execute("editions", db_path=db_path)["editions"]):
         value = {key: item.get(key) for key in ("edition_id", "edition_date", "product", "author_id", "state", "published_url", "updated_at", "fingerprint")}
+        approval = approvals.get(item["edition_id"])
+        if approval:
+            value["approval"] = {"approved_by": approval["payload"].get("editor_id") or approval.get("actor"),
+                                 "approved_at": approval.get("created_at"),
+                                 # An approval binds one exact draft; a later edit leaves it stale.
+                                 "current": approval.get("fingerprint") == item.get("fingerprint")}
         update = pending_edition_update(item["edition_id"], db_path=db_path)
         if update:
             value["pending_update"] = {"fingerprint": update["draft_fingerprint"],

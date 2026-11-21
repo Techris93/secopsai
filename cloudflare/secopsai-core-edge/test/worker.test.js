@@ -827,6 +827,26 @@ test("distinct human research commands are retained and conflicting retries fail
   db.close();
 });
 
+test("research operation reads show queued and failed console decisions straight from D1", {skip: !DatabaseSync}, async () => {
+  const {db, d1} = migratedSqliteD1();
+  const env = {DB: d1, CORE_INTELLIGENCE_TOKEN: "i".repeat(44), CORE_READ_TOKEN: "r".repeat(44)};
+  const endpoint = "https://core.example/api/v1/research/operation";
+  const queued = await handleRequest(new Request(endpoint, {method: "POST", headers: {authorization: `Bearer ${env.CORE_INTELLIGENCE_TOKEN}`, "content-type": "application/json"},
+    body: JSON.stringify({idempotency_key: "approve-1", requested_by: "named.operator", payload: {action: "brief-approve", actor: "named.operator", id: "BRIEF-2026-11-21", data: {}}})}), env);
+  assert.equal(queued.status, 202);
+  const read = async () => (await handleRequest(new Request(endpoint, {headers: {authorization: `Bearer ${env.CORE_READ_TOKEN}`}}), env)).json();
+  let commands = (await read()).commands;
+  assert.equal(commands.length, 1);
+  assert.deepEqual({action: commands[0].action, id: commands[0].id, status: commands[0].status, error: commands[0].error},
+    {action: "brief-approve", id: "BRIEF-2026-11-21", status: "queued", error: null});
+  assert.equal(JSON.stringify(commands).includes("named.operator"), false, "actor identities stay out of the read");
+  db.prepare("UPDATE coordinator_commands SET status='failed', error_message=? WHERE command_id=?").run("editor must approve the fingerprint of the exact edition they reviewed", commands[0].command_id);
+  commands = (await read()).commands;
+  assert.equal(commands[0].status, "failed");
+  assert.match(commands[0].error, /fingerprint/);
+  db.close();
+});
+
 test('hosted assistant transport preserves captured evidence, scopes jobs and fences completion', {skip: !DatabaseSync}, async () => {
   const {db, d1} = migratedSqliteD1();
   const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
