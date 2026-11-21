@@ -526,7 +526,7 @@ These commands can auto-refresh the pipeline before reading findings:
 
 Behavior:
 
-- If a recent refresh exists inside the TTL window, secopsai reuses cached results.
+- If a recent refresh exists inside the TTL window, SecOpsAI reuses cached results.
 - Default TTL is `60` seconds.
 - Use `--cache-ttl <seconds>` to change the window.
 - Use `--no-refresh` to disable auto-refresh entirely.

@@ -2,7 +2,7 @@
 
 > **New:** SecOpsAI is now available as a [native OpenClaw plugin](OpenClaw-Plugin.md) with TypeScript-based tools. This guide covers the Python CLI approach; for the plugin approach, see [OpenClaw Native Plugin](OpenClaw-Plugin.md).
 
-This guide shows how to wire **secopsai** into an existing **OpenClaw** deployment using the real Python CLIs:
+This guide shows how to wire **SecOpsAI** into an existing **OpenClaw** deployment using the real Python CLIs:
 
 - `run_openclaw_live.py` — live detection pipeline
 - `soc_store.py` — findings store and triage
@@ -10,7 +10,7 @@ This guide shows how to wire **secopsai** into an existing **OpenClaw** deployme
 
 ---
 
-## 1. Install secopsai
+## 1. Install SecOpsAI
 
 Run the one-line install on the **same machine** as your OpenClaw gateway:
 
@@ -109,7 +109,7 @@ python soc_store.py list
 
 ## 3. Inspect and triage findings (`soc_store` CLI)
 
-Security note: triage operations modify the local SOC store (SQLite). If you are running secopsai via an agent, prefer read-only operations by default and require explicit user confirmation before any triage/write action.
+Security note: triage operations modify the local SOC store (SQLite). If you are running SecOpsAI via an agent, prefer read-only operations by default and require explicit user confirmation before any triage/write action.
 
 **List all findings:**
 
@@ -250,9 +250,9 @@ When this fires, the agent should:
 
 Running alongside an existing gateway:
 
-- **Port separation:** secopsai uses no open ports by default; its Twilio bridge (if enabled) listens on a configurable local port (default `127.0.0.1:8091`) behind ngrok.
+- **Port separation:** SecOpsAI uses no open ports by default; its Twilio bridge (if enabled) listens on a configurable local port (default `127.0.0.1:8091`) behind ngrok.
 - **State directory:** `data/openclaw/` — keep it outside the gateway's writable path to avoid conflicts.
-- **Recommended pattern:** one secopsai sidecar per gateway host. The sidecar reads from `~/.openclaw/logs/` and writes findings to its own SQLite store.
+- **Recommended pattern:** one SecOpsAI sidecar per gateway host. The sidecar reads from `~/.openclaw/logs/` and writes findings to its own SQLite store.
 - **To confirm everything is wired up:**
 
 ```bash

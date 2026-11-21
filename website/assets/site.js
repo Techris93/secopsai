@@ -41,7 +41,19 @@ document.querySelectorAll(".copy-btn").forEach((button) => {
       await navigator.clipboard.writeText(button.dataset.copy || "");
       button.textContent = "COPIED";
     } catch (error) {
-      button.textContent = "COPY FAILED";
+      // Clipboard blocked (permissions, embedded browsers): select the
+      // command instead so the reader can copy it with the keyboard.
+      const code = button.closest(".install-cmd")?.querySelector("code");
+      if (code) {
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        button.textContent = "SELECTED";
+      } else {
+        button.textContent = "COPY FAILED";
+      }
     }
 
     window.setTimeout(() => {

@@ -22,6 +22,17 @@ theme:
 hooks:
   - scripts/mkdocs_hooks/csp_hashes.py
 
+# Footer: SecOpsAI links instead of the theme's "Made with" credit alone.
+copyright: >-
+  © 2026 SecOpsAI ·
+  <a href="https://secopsai.dev/">secopsai.dev</a> ·
+  <a href="https://blog.secopsai.dev/">Security blog</a> ·
+  <a href="https://github.com/Techris93/secopsai">GitHub</a> ·
+  <a href="mailto:security@secopsai.dev">Security contact</a>
+
+extra:
+  generator: false
+
 extra_css:
   - assets/stylesheets/extra.css
 

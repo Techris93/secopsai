@@ -1,10 +1,10 @@
 # Deployment Guide
 
-Instructions for deploying secopsai in production environments.
+Instructions for deploying SecOpsAI in production environments.
 
 ## Deployment Targets
 
-secopsai can be deployed as:
+SecOpsAI can be deployed as:
 
 1. **Standalone Service** — CLI tool for periodic telemetry analysis
 2. **Daemon Service** — Continuous monitoring via systemd/launchd

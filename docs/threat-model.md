@@ -72,7 +72,7 @@ This is a pragmatic threat model for the SecOpsAI product and its default deploy
 - Default to read-only operations (`list/show/check`).
 - Require explicit user confirmation before any write/triage action.
 - Implement a strict allowlist (only `secopsai ...` commands) for agent execution.
-- Run OpenClaw, Hermes, and secopsai under a dedicated low-privilege OS user where practical.
+- Run OpenClaw, Hermes, and SecOpsAI under a dedicated low-privilege OS user where practical.
 
 ### 3) Sensitive data in findings and WhatsApp summaries
 
