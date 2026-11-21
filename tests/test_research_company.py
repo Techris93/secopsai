@@ -1127,7 +1127,7 @@ def test_approved_edition_publishes_through_release_bundle_and_live_confirmation
     assert confirm_live_publications(lambda url: live, db_path=db) == {"confirmed": [edition["edition_id"]], "waiting": []}
     assert hosted_projection(db_path=db)["editions"][0]["state"] == "published"
     assert release_bundles(db_path=db) == [], "published editions are not exported again"
-    assert result["url"].endswith(bundles[0]["draft"]["slug"] + ".html")
+    assert result["url"].endswith("/posts/" + bundles[0]["draft"]["slug"])
 
 
 def test_hosted_actions_report_outcome_and_people_without_qualifications(db):

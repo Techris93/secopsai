@@ -9,119 +9,119 @@
     <lastBuildDate>Fri, 20 Nov 2026 16:52:04 GMT</lastBuildDate>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-20</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-20.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-20</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-20.html</guid>
       <pubDate>Fri, 20 Nov 2026 16:52:04 GMT</pubDate>
       <description>8 separate advisories · highest CVSS 10.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-19</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html</guid>
       <pubDate>Thu, 19 Nov 2026 19:32:49 GMT</pubDate>
       <description>9 separate advisories · 2 exploited in the wild · highest CVSS 9.8.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-18</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18.html</guid>
       <pubDate>Wed, 18 Nov 2026 23:00:39 GMT</pubDate>
       <description>1 advisory · 1 exploited in the wild · highest CVSS 9.9.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-17</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-17.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-17</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-17.html</guid>
       <pubDate>Tue, 17 Nov 2026 15:54:16 GMT</pubDate>
       <description>1 advisory · highest CVSS 7.8.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-14</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14.html</guid>
       <pubDate>Sat, 14 Nov 2026 17:36:11 GMT</pubDate>
       <description>2 separate advisories · 2 exploited in the wild · highest CVSS 8.6.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-13</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13.html</guid>
       <pubDate>Fri, 13 Nov 2026 17:48:37 GMT</pubDate>
       <description>1 advisory · highest CVSS 9.8.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-12</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-12.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-12</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-12.html</guid>
       <pubDate>Thu, 12 Nov 2026 22:59:45 GMT</pubDate>
       <description>1 advisory · highest CVSS 9.1.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-11</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html</guid>
       <pubDate>Wed, 11 Nov 2026 20:09:57 GMT</pubDate>
       <description>8 separate advisories · 4 exploited in the wild · highest CVSS 9.5.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-10</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10.html</guid>
       <pubDate>Tue, 10 Nov 2026 22:30:23 GMT</pubDate>
       <description>IBM Aspera Faspex Incorrect Authorization Vulnerability (exploited); OpenBSD OpenSSH Unexpected Status Code or Return Value Vulnerability (exploited); node-opcua: Namespace-Level RBAC Fail-Open - Anonymous Write/Call Bypass via Unbound `DefaultRolePermissions; and 5 more.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-09</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html</guid>
       <pubDate>Tue, 10 Nov 2026 02:45:08 GMT</pubDate>
       <description>SonicWall SonicOS SSLVPN Use of Single-factor Authentication Vulnerability (exploited); fastapi-code-generator: Import-time RCE via response status-code key -&gt; unescaped @app.get(..., responses={...}) dict; fastapi-code-generator: Import-time RCE via route path -&gt; unescaped @app.get(&#x27;...&#x27;) decorator; and 2 more.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-08</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html</guid>
       <pubDate>Sun, 08 Nov 2026 20:31:14 GMT</pubDate>
       <description>LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-06</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html</guid>
       <pubDate>Sun, 08 Nov 2026 17:11:26 GMT</pubDate>
       <description>Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE; GitPython: arbitrary file read via attacker-controlled branch name in `Head.checkout()` (incomplete fix of CVE-2026-78679); and 1 more.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-03</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03.html</guid>
       <pubDate>Wed, 04 Nov 2026 14:01:22 GMT</pubDate>
       <description>Verified intelligence and defensive updates for 2026-11-03.</description>
     </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-10-31</title>
-      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31.html</link>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31</link>
       <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31.html</guid>
       <pubDate>Sat, 31 Oct 2026 22:23:33 GMT</pubDate>
       <description>Verified intelligence and defensive updates for 2026-10-31.</description>
     </item>
     <item>
       <title>Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives</title>
-      <link>https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html</link>
+      <link>https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026</link>
       <guid>https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html</guid>
       <pubDate>Sat, 10 Oct 2026 23:18:50 GMT</pubDate>
       <description>Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages.</description>
     </item>
     <item>
       <title>Anatomy of a false positive: clearing a critical npm alert in twenty minutes</title>
-      <link>https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html</link>
+      <link>https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage</link>
       <guid>https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html</guid>
       <pubDate>Fri, 09 Oct 2026 15:22:52 GMT</pubDate>
       <description>SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed.</description>
     </item>
     <item>
       <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</title>
-      <link>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</link>
+      <link>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory</link>
       <guid>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</guid>
       <pubDate>Tue, 12 May 2026 00:00:00 GMT</pubDate>
       <description>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</description>

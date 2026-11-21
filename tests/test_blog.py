@@ -34,7 +34,7 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertRegex(security_txt, r"Expires: \d{4}-\d{2}-\d{2}T00:00:00Z")
             sitemap = ET.fromstring((paths.root / "sitemap.xml").read_text(encoding="utf-8"))
             locs = [node.text for node in sitemap.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
-            self.assertIn("https://blog.secopsai.dev/posts/unit-post.html", locs)
+            self.assertIn("https://blog.secopsai.dev/posts/unit-post", locs)
             self.assertIn("https://blog.secopsai.dev/subscribe", locs)
             self.assertIn('content="noindex"', (paths.root / "404.html").read_text(encoding="utf-8"))
 
@@ -75,12 +75,16 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertEqual(feed["items"][0]["severity"], "critical")
             self.assertGreaterEqual(feed["items"][0]["reading_time_minutes"], 1)
             self.assertTrue(feed["items"][0]["url"].startswith("https://blog.secopsai.dev/posts/"))
+            # The address Pages serves (it redirects .html), while feed identities stay as first published.
+            self.assertFalse(feed["items"][0]["url"].endswith(".html"))
+            self.assertEqual(feed["items"][0]["id"], feed["items"][0]["url"] + ".html")
             self.assertTrue(feed["items"][0]["summary"])
             # JSON Feed 1.1 requires content on every item; links must work outside the site.
             self.assertIn("<", feed["items"][0]["content_html"])
             self.assertNotRegex(feed["items"][0]["content_html"], r'\s(?:href|src)="/(?!/)')
             self.assertEqual(len(rss_items), 1)
             self.assertTrue(rss_items[0].findtext("description"))
+            self.assertEqual(rss_items[0].findtext("guid"), rss_items[0].findtext("link") + ".html")
             # Browsers dropped XSLT: no stylesheet, and the feed names its own URL.
             rss_text = (paths.root / "feed.xml").read_text(encoding="utf-8")
             self.assertNotIn("xml-stylesheet", rss_text)
@@ -481,9 +485,9 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertNotIn(str(temp_dir), published_draft["published_post_path"])
         self.assertEqual(repeated["total"], 0)
         self.assertEqual(repeated["published"], [])
-        self.assertEqual(repeated["ready_for_deploy"], ["https://blog.secopsai.dev/posts/external-story.html"])
+        self.assertEqual(repeated["ready_for_deploy"], ["https://blog.secopsai.dev/posts/external-story"])
         self.assertEqual(deployed["total"], 1)
-        self.assertEqual(deployed["deployed"], ["https://blog.secopsai.dev/posts/external-story.html"])
+        self.assertEqual(deployed["deployed"], ["https://blog.secopsai.dev/posts/external-story"])
         self.assertEqual(deployed_draft["review_status"], "deployed")
         self.assertEqual(deployed_draft["status"], "published")
         self.assertIn("published_url", deployed_draft)
@@ -535,12 +539,12 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(deployed["total"], 0)
         self.assertEqual(payload["total"], 0)
         self.assertEqual(payload["published"], [])
-        self.assertEqual(payload["ready_for_deploy"], ["https://blog.secopsai.dev/posts/already-public-story.html"])
+        self.assertEqual(payload["ready_for_deploy"], ["https://blog.secopsai.dev/posts/already-public-story"])
         self.assertEqual(stored_after_publish["review_status"], "approved")
         self.assertEqual(stored_after_publish["published_post_path"], "blog/posts/already-public-story.json")
         self.assertNotIn(str(temp_dir), stored_after_publish["published_post_path"])
         self.assertEqual(deploy_payload["total"], 1)
-        self.assertEqual(deploy_payload["deployed"], ["https://blog.secopsai.dev/posts/already-public-story.html"])
+        self.assertEqual(deploy_payload["deployed"], ["https://blog.secopsai.dev/posts/already-public-story"])
         self.assertEqual(stored_after_deploy["review_status"], "deployed")
         self.assertEqual(stored_after_deploy["published_post_path"], "blog/posts/already-public-story.json")
         self.assertEqual(stored_after_deploy["extracted"]["products"], ["Microsoft Microsoft"])
@@ -607,7 +611,7 @@ class BlogPublishingTests(unittest.TestCase):
 
         self.assertEqual(listed["drafts"][0]["review_status"], "approved")
         self.assertEqual(payload["total"], 1)
-        self.assertEqual(payload["published"], ["https://blog.secopsai.dev/posts/updated-public-story.html"])
+        self.assertEqual(payload["published"], ["https://blog.secopsai.dev/posts/updated-public-story"])
 
     def test_publish_archive_restores_generated_post_outputs(self):
         with tempfile.TemporaryDirectory() as temp_dir:

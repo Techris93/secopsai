@@ -39,8 +39,9 @@ def recent_slugs(feed: Dict[str, Any], now: _dt.datetime) -> List[str]:
             published = _dt.datetime.fromisoformat(str(item.get("date_published") or "").replace("Z", "+00:00"))
         except ValueError:
             continue
-        if url.startswith(POST_PREFIX) and url.endswith(".html") and now - published <= RECENT:
-            slugs.append(url[len(POST_PREFIX):-len(".html")])
+        slug = url[len(POST_PREFIX):].removesuffix(".html") if url.startswith(POST_PREFIX) else ""
+        if slug and "/" not in slug and now - published <= RECENT:
+            slugs.append(slug)
     return slugs[:10]
 
 

@@ -64,7 +64,7 @@ from secopsai.enterprise_store import EnterpriseContext, RateLimiter, build_ente
 from secopsai.enterprise_workflows import pentest_engagement, questionnaire_record, threat_model_record
 from secopsai.vulnerability_management import normalize_advisory
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
-from secopsai.siem import MetricsRegistry
+from secopsai.siem import enterprise_metrics
 from secopsai.mcp_gateway import gateway_status as mcp_gateway_status
 from secopsai.mcp_gateway import record_activity as record_mcp_activity
 from secopsai.mcp_gateway import revoke_session as revoke_mcp_session
@@ -287,8 +287,19 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
 
     @application.get("/api/v1/enterprise/metrics")
     def enterprise_metrics(_role: str = Depends(require_read)) -> dict[str, Any]:
-        registry = MetricsRegistry()
+        registry = enterprise_metrics(enterprise_store_for("operator_read"))
         return {"metrics": registry.snapshot(), "prometheus": registry.prometheus()}
+
+    @application.get("/api/v1/enterprise/workflows/{kind}/{record_id}/versions")
+    def enterprise_workflow_versions(kind: str, record_id: str, version: int = 0, _role: str = Depends(require_read)) -> dict[str, Any]:
+        record_kind = {"questionnaire": "questionnaire", "threat-model": "threat_model", "pentest": "engagement"}.get(kind)
+        if not record_kind:
+            raise HTTPException(status_code=404, detail="unknown workflow kind")
+        store = enterprise_store_for("operator_read")
+        try:
+            return store.get_record_version(record_kind, record_id, version) if version else {"versions": store.list_record_versions(record_kind, record_id)}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @application.get("/api/v1/enterprise/events")
     def enterprise_events(

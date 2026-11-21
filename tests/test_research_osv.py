@@ -75,7 +75,7 @@ def test_publish_renders_pages_and_feed(real_case, tmp_path):
     assert "left-padder" in page and "removed" in page and "available" in page and "a" * 64 in page
     assert advisory_id in (paths.root / "advisories" / "index.html").read_text()
     assert json.loads((paths.root / "advisories" / "index.json").read_text())[0]["id"] == advisory_id
-    assert f"/advisories/{advisory_id}.html" in (paths.root / "sitemap.xml").read_text()
+    assert f"/advisories/{advisory_id}<" in (paths.root / "sitemap.xml").read_text()
 
 
 def test_submit_is_a_dry_run_without_confirm_and_records_the_pr(real_case, tmp_path, monkeypatch):

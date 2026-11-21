@@ -24,7 +24,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-20",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-20.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-20"
     },
     {
       "affected_packages": [],
@@ -47,7 +47,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-19",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19"
     },
     {
       "affected_packages": [],
@@ -70,7 +70,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-18",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18"
     },
     {
       "affected_packages": [],
@@ -93,7 +93,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-17",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-17.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-17"
     },
     {
       "affected_packages": [],
@@ -116,7 +116,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-14",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14"
     },
     {
       "affected_packages": [],
@@ -139,7 +139,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-13",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13"
     },
     {
       "affected_packages": [],
@@ -162,7 +162,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-12",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-12.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-12"
     },
     {
       "affected_packages": [],
@@ -185,7 +185,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-11",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11"
     },
     {
       "affected_packages": [],
@@ -208,7 +208,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-10",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10"
     },
     {
       "affected_packages": [],
@@ -231,7 +231,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-09",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09"
     },
     {
       "affected_packages": [],
@@ -254,7 +254,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-08",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08"
     },
     {
       "affected_packages": [],
@@ -277,7 +277,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-06",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06"
     },
     {
       "affected_packages": [],
@@ -300,7 +300,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-03",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03"
     },
     {
       "affected_packages": [],
@@ -323,7 +323,7 @@
         "Threat Intelligence"
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-10-31",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31.html"
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31"
     },
     {
       "affected_packages": [],
@@ -348,7 +348,7 @@
         "Supply Chain"
       ],
       "title": "Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives",
-      "url": "https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html"
+      "url": "https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026"
     },
     {
       "affected_packages": [],
@@ -375,7 +375,7 @@
         "Triage"
       ],
       "title": "Anatomy of a false positive: clearing a critical npm alert in twenty minutes",
-      "url": "https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html"
+      "url": "https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage"
     },
     {
       "affected_packages": [
@@ -407,7 +407,7 @@
         "Mitigation"
       ],
       "title": "Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts",
-      "url": "https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html"
+      "url": "https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory"
     }
   ],
   "title": "SecOpsAI Security Blog",

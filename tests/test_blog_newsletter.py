@@ -18,12 +18,12 @@ spec.loader.exec_module(newsletter)
 NOW = dt.datetime(2026, 11, 21, 12, tzinfo=dt.timezone.utc)
 
 
-def item(slug, hours_ago, host="https://blog.secopsai.dev/posts/"):
-    return {"url": f"{host}{slug}.html", "date_published": (NOW - dt.timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")}
+def item(slug, hours_ago, host="https://blog.secopsai.dev/posts/", suffix=""):
+    return {"url": f"{host}{slug}{suffix}", "date_published": (NOW - dt.timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")}
 
 
 def test_only_posts_from_the_last_two_days_are_sent():
-    feed = {"items": [item("today", 3), item("yesterday", 30), item("old", 60), item("elsewhere", 1, "https://evil.example/posts/"),
+    feed = {"items": [item("today", 3), item("yesterday", 30, suffix=".html"), item("old", 60), item("elsewhere", 1, "https://evil.example/posts/"),
                       {"url": "https://blog.secopsai.dev/posts/undated.html", "date_published": "soon"}]}
     assert newsletter.recent_slugs(feed, NOW) == ["today", "yesterday"]
 
