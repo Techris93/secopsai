@@ -374,7 +374,11 @@ def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
         publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
     with pytest.raises(ValueError):
         approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="alice", db_path=db)
+    assert "approval" not in hosted_projection(db_path=db)["editions"][0]
     approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    # The console shows who approved the exact draft, and when.
+    approval = hosted_projection(db_path=db)["editions"][0]["approval"]
+    assert approval["approved_by"] == "carol" and approval["approved_at"] and approval["current"] is True
     published = publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
     assert published["published"] and (tmp_path / "blog" / "posts" / (edition["draft"]["slug"] + ".json")).is_file()
     with pytest.raises(ValueError, match="correction workflow"):

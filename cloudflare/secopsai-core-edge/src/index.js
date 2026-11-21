@@ -195,7 +195,8 @@ export async function handleRequest(request, env) {
       if (request.headers.get("authorization") === `Bearer ${env.CORE_READ_TOKEN}` && env.CORE_READ_TOKEN) requireBearer(request, env.CORE_READ_TOKEN);
       else requireBridge(request, env);
       const row = await env.DB.prepare("SELECT projection_json,synced_at FROM research_operation_projections WHERE workspace_id=?").bind(clean(env.CORE_WORKSPACE_ID, 160) || "hosted").first();
-      return response(200, row ? { ...parseJson(row.projection_json, {}), synced_at: row.synced_at, hosted_projection: true } : { status: "awaiting_worker", hosted_projection: true }, requestId);
+      const commands = await recentResearchCommands(env.DB);
+      return response(200, row ? { ...parseJson(row.projection_json, {}), synced_at: row.synced_at, hosted_projection: true, commands } : { status: "awaiting_worker", hosted_projection: true, commands }, requestId);
     }
     if (url.pathname === "/api/v1/research/operation" && request.method === "POST") {
       requireBearer(request, env.CORE_INTELLIGENCE_TOKEN);
@@ -2026,6 +2027,30 @@ async function queueCoordinatorCommand(request, db, requestId, commandType, fixe
       commandType === "research-operation" ? researchCommandJson(payload) : boundedJson(payload, MAX_SUMMARY_BYTES, "Coordinator command"), now, now).run();
   await writeAudit(db, { requestId, action: `intelligence.coordinator.${commandType}`, actorRole: "intelligence_operator", result: "queued", sourceInstance: "secopsai-core-edge", details: { command_id: commandId }, createdAt: now });
   return { command_id: commandId, command_type: commandType, status: "queued", queued_at: now };
+}
+
+// Research decisions submitted from the console are queued for the worker,
+// and the worker's projection only refreshes after its next cycle. These rows
+// come straight from D1, so the console can show an approval as queued,
+// running, done or failed (with the reason) the moment it is submitted.
+async function recentResearchCommands(db) {
+  const result = await db.prepare(
+    "SELECT command_id,status,queued_at,started_at,completed_at,error_message,payload_json FROM coordinator_commands " +
+    "WHERE command_type='research-operation' AND queued_at >= ? ORDER BY queued_at DESC LIMIT 50",
+  ).bind(new Date(Date.now() - 7 * 86400000).toISOString()).all();
+  return (result.results || []).map((row) => {
+    const payload = parseJson(row.payload_json, {});
+    return {
+      command_id: row.command_id,
+      action: clean(payload.action, 40),
+      id: clean(payload.id, 160),
+      status: row.status,
+      queued_at: row.queued_at,
+      started_at: row.started_at || null,
+      completed_at: row.completed_at || null,
+      error: row.status === "failed" ? clean(row.error_message, 300) : null,
+    };
+  });
 }
 
 function publicCommand(row, { includeResult = true, includeLease = false } = {}) {
