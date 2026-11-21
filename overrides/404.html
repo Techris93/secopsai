@@ -1,0 +1,15 @@
+{% extends "main.html" %}
+
+{#- Replaces the theme's bare "404 - Not found". Links are absolute because
+    this page is served at whatever path was requested. -#}
+{% block content %}
+  <h1>Page not found</h1>
+  <p>This page does not exist or has moved. Search the documentation, or start from one of these pages.</p>
+  <ul>
+    <li><a href="{{ config.site_url }}">Documentation home</a></li>
+    <li><a href="{{ config.site_url }}getting-started/">Getting started</a></li>
+    <li><a href="{{ config.site_url }}operator-runbook/">Operator runbook</a></li>
+    <li><a href="{{ config.site_url }}research-operations/">Research operations</a></li>
+    <li><a href="https://secopsai.dev/">secopsai.dev</a></li>
+  </ul>
+{% endblock %}

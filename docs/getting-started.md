@@ -1,10 +1,10 @@
-# Getting Started with secopsai
+# Getting Started with SecOpsAI
 
 Welcome! This guide will get you from telemetry refresh to triage in under 5 minutes.
 
 ## What You'll Learn
 
-- How to install secopsai
+- How to install SecOpsAI
 - How to run your first detection
 - How to understand findings
 - How to investigate and triage them
@@ -12,7 +12,7 @@ Welcome! This guide will get you from telemetry refresh to triage in under 5 min
 
 ## 30-Second Overview
 
-**secopsai** is a local-first detection and triage platform for OpenClaw, Hermes Agent, and host telemetry. It comes with:
+**SecOpsAI** is a local-first detection and triage platform for OpenClaw, Hermes Agent, and host telemetry. It comes with:
 
 - **Detection rules** for dangerous execution, policy abuse, data exfiltration, malware, and supply-chain release review
 - **Reproducible benchmark corpus** for OpenClaw validation

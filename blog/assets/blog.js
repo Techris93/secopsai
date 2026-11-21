@@ -27,13 +27,26 @@
     if (event.key === "Escape") setMenuOpen(false);
   });
 
+  // Said when a search or topic leaves no posts, instead of a blank list.
+  const emptyState = postList ? document.createElement("p") : null;
+  if (emptyState) {
+    emptyState.className = "listing-empty";
+    emptyState.hidden = true;
+    emptyState.setAttribute("role", "status");
+    emptyState.textContent = "No posts match. Try another topic or search term.";
+    postList.append(emptyState);
+  }
+
   const applyFilters = () => {
     const term = search?.value.trim().toLowerCase() || "";
+    let shown = 0;
     for (const card of cards) {
       const matchesSearch = card.dataset.search.includes(term);
       const matchesTopic = activeTopic === "all" || card.dataset.topic.includes(activeTopic);
       card.style.display = matchesSearch && matchesTopic ? "" : "none";
+      if (matchesSearch && matchesTopic) shown += 1;
     }
+    if (emptyState) emptyState.hidden = shown > 0;
   };
 
   const applySort = () => {

@@ -3355,13 +3355,19 @@ def _asset_url(name: str) -> str:
     return f"/assets/{name}?v={digest}"
 
 
+# One menu for the blog's pages, so it does not change from page to page.
+BLOG_NAV = [
+    ("https://secopsai.dev/", "Platform"),
+    ("/#topics", "Topics"),
+    ("/posts/", "Latest"),
+    ("https://docs.secopsai.dev/", "Docs"),
+    ("/feed.xml", "RSS"),
+    ("/json-feed", "JSON Feed"),
+]
+
+
 def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List[tuple[str, str]]] = None) -> str:
-    nav_links = links or [
-        ("/", "Blog Home"),
-        ("https://docs.secopsai.dev/", "Docs"),
-        ("/feed.xml", "RSS"),
-        ("/json-feed", "JSON Feed"),
-    ]
+    nav_links = links or BLOG_NAV
     link_html = "\n".join(
         f'          <a href="{html.escape(href)}">{html.escape(label)}</a>'
         for href, label in nav_links
@@ -3775,12 +3781,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
-    {_render_site_header(links=[
-        ("/", "Blog Home"),
-        ("https://docs.secopsai.dev/", "Docs"),
-        ("/feed.xml", "RSS"),
-        ("/json-feed", "JSON Feed"),
-    ])}
+    {_render_site_header()}
     <main>
       <header class="shell article-hero">
         <div class="breadcrumb">
@@ -4130,6 +4131,8 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
     topic_buttons = "\n".join(
         f'<button class="topic-filter" type="button" data-topic-filter="{html.escape(topic.lower())}">{html.escape(topic)}</button>'
         for topic in TOPIC_SECTIONS
+        # A topic with no posts filtered to an empty page; show only topics in use.
+        if any(topic in _post_categories(post) for post in posts)
     )
     latest_description = "Research, advisories, detections, and mitigation notes"
     homepage_social = _absolute_url(_site_social_src())
@@ -4158,14 +4161,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
     <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
-    {_render_site_header(links=[
-        ("https://secopsai.dev/", "Platform"),
-        ("/#topics", "Topics"),
-        ("/posts/", "Latest"),
-        ("https://docs.secopsai.dev/", "Docs"),
-        ("/feed.xml", "RSS"),
-        ("/json-feed", "JSON Feed"),
-    ])}
+    {_render_site_header()}
     <main class="listing-page">
       <section class="shell listing-hero">
         <h1>Latest posts</h1>

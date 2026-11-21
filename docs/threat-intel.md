@@ -1,6 +1,6 @@
 # Threat Intelligence (IOC) Pipeline
 
-secopsai includes a local-first threat intelligence pipeline that can:
+SecOpsAI includes a local-first threat intelligence pipeline that can:
 
 1) Aggregate IOCs from open-source feeds
 2) Merge curated high-confidence indicators shipped with SecOpsAI
@@ -69,7 +69,7 @@ secopsai intel match --limit-iocs 500 --json
 
 ### Where matches land
 
-Matches are persisted into the same SOC DB used by the rest of secopsai:
+Matches are persisted into the same SOC DB used by the rest of SecOpsAI:
 
 - `data/openclaw/findings/openclaw_soc.db`
 

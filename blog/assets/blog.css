@@ -42,7 +42,6 @@ body {
 ::selection { background: var(--note); color: #fff; }
 
 .shell,
-.post-card,
 .post-body {
   max-width: 880px;
   margin-left: auto;
@@ -348,7 +347,31 @@ button.button {
 .listing-hero { border-bottom: 1px solid var(--rule-dark); padding-bottom: 20px; margin-bottom: 20px; }
 .listing-hero h1 { font-size: 26px; margin: 0 0 8px; }
 .listing-hero > p { color: var(--ink-2); max-width: 64ch; margin: 0; }
-.filters.compact { margin: 16px 0; }
+.filters.compact { margin: 16px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.filters.compact input[type="search"] {
+  flex: 1 1 280px;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--rule-dark);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+}
+.filters.compact label { font-size: 12px; color: var(--muted); }
+.filters.compact select {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-dark);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+}
+.filters.compact input:focus-visible,
+.filters.compact select:focus-visible { outline: 2px solid var(--note); outline-offset: 1px; }
+.listing-empty { color: var(--muted); font-size: 14px; padding: 18px 0; }
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .topic-filter {
   font-family: var(--mono);
@@ -375,7 +398,9 @@ button.button {
   gap: 14px;
   margin-top: 18px;
 }
-.post-card { padding: 18px; }
+/* Cards fill their grid column; auto margins made each one shrink to its text and centre. */
+.post-card { padding: 18px; display: block; color: inherit; text-decoration: none; }
+.post-card h2 { color: var(--ink); }
 .post-card h2 { font-size: 17px; margin: 6px 0 8px; line-height: 1.35; }
 .post-card:hover h2 { color: var(--note); }
 .post-card p { margin: 0 0 8px; }
@@ -416,6 +441,9 @@ button.button {
   font-size: 11px;
   color: var(--muted);
   margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .breadcrumb a { color: var(--note); text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }
@@ -669,7 +697,8 @@ button.button {
 .ioc-card ul { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .ioc-card a { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); padding: 4px 10px; border-radius: var(--radius); text-decoration: none; }
 .ioc-card a:hover { border-color: var(--note); color: var(--note); }
-.post-body li code { overflow-wrap: anywhere; word-break: break-all; }
+/* Wrap long identifiers only when they overflow; break-all split short versions mid-number. */
+.post-body li code { overflow-wrap: anywhere; }
 
 /* Comment form: visible labels, full-width fields, stacks on phones. */
 .comment-form { display: grid; gap: 16px; margin-top: 20px; }

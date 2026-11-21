@@ -239,7 +239,8 @@ body {
   background: #FFFFFF;
   border-top: 1px solid var(--secops-rule);
 }
-.md-copyright { color: var(--secops-ink-2); }
+.md-copyright,
+.md-copyright__highlight { color: var(--secops-ink-2); }
 .md-footer-meta.md-typeset .md-copyright a {
   color: var(--secops-note);
   font-weight: 600;
