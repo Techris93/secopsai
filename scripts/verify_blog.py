@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -83,6 +84,9 @@ def main() -> int:
     for page_name, page in (("index", index), ("JSON feed landing", json_landing), ("subscribe page", subscribe_page)):
         if "data-subscribe-form" not in page or "/assets/subscribe.js" not in page:
             raise AssertionError(f"{page_name} must include the email signup form and its script")
+    for page_name, page in (("index", index), ("post", post), ("subscribe page", subscribe_page)):
+        if re.search(r'(?:href|src)="/assets/[a-z]+\.(?:css|js)"', page):
+            raise AssertionError(f"{page_name} links an unversioned stylesheet or script; use _asset_url so caches refresh")
     for slot in ("__STATUS_TITLE__", "__STATUS_MESSAGE__", "__STATUS_FORM__"):
         if slot not in status_template:
             raise AssertionError(f"subscription status template missing slot {slot}")
