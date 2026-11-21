@@ -541,7 +541,8 @@ const newsletterSend = async (request, env) => {
   }
   const results = [];
   for (const slug of [...new Set(slugs)]) {
-    const item = items.find((entry) => entry.url === `${SITE}/posts/${slug}.html`);
+    // Feed URLs dropped the .html suffix; accept both while older builds are cached.
+    const item = items.find((entry) => entry.url === `${SITE}/posts/${slug}` || entry.url === `${SITE}/posts/${slug}.html`);
     if (!item) {
       results.push({slug, status: "not_in_feed"});
     } else if (!(Date.now() - Date.parse(item.date_published || "") < NEWSLETTER_MAX_POST_AGE_MS)) {

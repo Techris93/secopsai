@@ -106,6 +106,7 @@ jobs:
           sh -n docs/install.sh
           sh -n docs/install-hermes.sh
           diff -r website www
+          python scripts/version_site_assets.py --check
           cmp docs/install.sh website/install.sh
           cmp docs/install.sh www/install.sh
           cmp docs/install-hermes.sh website/install-hermes.sh

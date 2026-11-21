@@ -21,6 +21,7 @@ theme:
 
 hooks:
   - scripts/mkdocs_hooks/csp_hashes.py
+  - scripts/mkdocs_hooks/asset_versions.py
 
 # Footer: SecOpsAI links instead of the theme's "Made with" credit alone.
 copyright: >-

@@ -36,7 +36,7 @@ function d1() {
 const NOW = Date.now();
 const FEED = {
   items: [
-    {url: `${ORIGIN}/posts/fresh-post.html`, title: "Fresh <post>", summary: "Two advisories.", date_published: new Date(NOW - 3600e3).toISOString()},
+    {url: `${ORIGIN}/posts/fresh-post`, title: "Fresh <post>", summary: "Two advisories.", date_published: new Date(NOW - 3600e3).toISOString()},
     {url: `${ORIGIN}/posts/old-post.html`, title: "Old post", summary: "Old.", date_published: new Date(NOW - 10 * 86400e3).toISOString()},
   ],
 };

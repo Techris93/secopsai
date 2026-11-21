@@ -418,6 +418,14 @@ def _render_share_bar(post: Dict[str, Any], *, compact: bool = False) -> str:
 
 
 def _post_url(slug: str) -> str:
+    """The address a post is served at. Pages redirects /posts/<slug>.html here,
+    so canonical links, sharing, the sitemap and feed links use this form."""
+    return f"{BASE_URL}/posts/{slug}"
+
+
+def _post_guid(slug: str) -> str:
+    """A post's identity in the feeds: the .html address it was first published
+    under. Changing it would make feed readers show every old post as new."""
     return f"{BASE_URL}/posts/{slug}.html"
 
 
@@ -3261,7 +3269,7 @@ def _render_related_links(post: Dict[str, Any], posts: Optional[List[Dict[str, A
     for slug in related:
         candidate = by_slug.get(slug)
         title = candidate.get("title") if candidate else slug.replace("-", " ").title()
-        items.append(f'<li><a href="/posts/{html.escape(slug)}.html">{html.escape(redact(title))}</a></li>')
+        items.append(f'<li><a href="/posts/{html.escape(slug)}">{html.escape(redact(title))}</a></li>')
     return "<ul>" + "".join(items) + "</ul>"
 
 
@@ -3953,7 +3961,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
             " ".join([title, summary, packages, iocs, sources, topics]).lower()
         )
         cards.append(
-            f"""<a class="post-card" href="/posts/{slug}.html"
+            f"""<a class="post-card" href="/posts/{slug}"
           data-search="{search}"
           data-topic="{html.escape(topics)}"
           data-severity="{_post_severity_rank(post)}"
@@ -3987,7 +3995,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     if featured:
         featured_slug = html.escape(str(featured["slug"]))
         featured_html = f"""<section class="featured-grid" aria-label="Featured security research">
-        <a class="featured-card" href="/posts/{featured_slug}.html">
+        <a class="featured-card" href="/posts/{featured_slug}">
           <p class="section-label">Featured</p>
           <h2>{html.escape(redact(featured.get("title", "")))}</h2>
           <p>{html.escape(_post_summary(featured))}</p>
@@ -4079,7 +4087,7 @@ def _render_latest_strip(posts: List[Dict[str, Any]], *, exclude: str = "", limi
     if not items:
         return ""
     rows = "\n".join(
-        f"""<a class="latest-row" href="/posts/{html.escape(str(post['slug']))}.html">
+        f"""<a class="latest-row" href="/posts/{html.escape(str(post['slug']))}">
             <span class="pill {_badge_class(post.get('severity'))}">{html.escape(str(post.get('severity', 'info')).title())}</span>
             <span class="latest-title">{html.escape(redact(post.get('title', '')))}</span>
             <span class="latest-date">{html.escape(_post_date(str(post.get('published_at') or post.get('updated_at') or '')))}</span>
@@ -4111,7 +4119,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
         updated = str(post.get("updated_at") or post.get("published_at") or "")
         search = html.escape(" ".join([title, summary, packages, iocs, sources, topics]).lower())
         cards.append(
-            f"""<a class="post-card" href="/posts/{slug}.html"
+            f"""<a class="post-card" href="/posts/{slug}"
           data-search="{search}"
           data-topic="{html.escape(topics)}"
           data-severity="{_post_severity_rank(post)}"
@@ -4219,7 +4227,7 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     items = "\n".join(
         f"""<article class="post-card">
           <p class="eyebrow">{html.escape(str(post.get("updated_at", "")))}</p>
-          <h2><a href="/posts/{html.escape(str(post["slug"]))}.html">{html.escape(redact(post.get("title", "")))}</a></h2>
+          <h2><a href="/posts/{html.escape(str(post["slug"]))}">{html.escape(redact(post.get("title", "")))}</a></h2>
           <p>{html.escape(_post_summary(post))}</p>
         </article>"""
         for post in posts
@@ -4424,7 +4432,7 @@ def _load_advisories(paths: BlogPaths) -> List[Dict[str, Any]]:
 def _advisory_sitemap_entries(paths: BlogPaths) -> List[tuple]:
     docs = _load_advisories(paths)
     entries = [(f"{BASE_URL}/advisories/", "")] if docs else []
-    return entries + [(f"{BASE_URL}/advisories/{doc['id']}.html", _post_date(doc.get("modified"))) for doc in docs]
+    return entries + [(f"{BASE_URL}/advisories/{doc['id']}", _post_date(doc.get("modified"))) for doc in docs]
 
 
 def _advisory_page(*, title: str, description: str, canonical: str, body: str) -> str:
@@ -4480,7 +4488,7 @@ def _render_advisory_html(doc: Dict[str, Any]) -> str:
                          for ref in doc.get("references") or [] if str(ref.get("url") or "").startswith("https://"))
     aliases = ", ".join(html.escape(str(alias)) for alias in doc.get("aliases") or [])
     techniques = " ".join(f'<span class="pill">{html.escape(str(item))}</span>' for item in secopsai_meta.get("attack_techniques") or [])
-    canonical = f"{BASE_URL}/advisories/{advisory_id}.html"
+    canonical = f"{BASE_URL}/advisories/{advisory_id}"
     body = f"""      <header class="shell article-hero">
         <div class="breadcrumb"><a href="/advisories/">Advisories</a><span>&gt;</span><span>{html.escape(advisory_id)}</span></div>
         <p class="eyebrow">{html.escape(advisory_id)} • Malicious package</p>
@@ -4515,7 +4523,7 @@ def _render_advisory_html(doc: Dict[str, Any]) -> str:
 def _render_advisories_index(docs: List[Dict[str, Any]]) -> str:
     rows = "".join(
         "<tr>"
-        f'<td><a href="/advisories/{html.escape(str(doc["id"]))}.html">{html.escape(str(doc["id"]))}</a></td>'
+        f'<td><a href="/advisories/{html.escape(str(doc["id"]))}">{html.escape(str(doc["id"]))}</a></td>'
         f"<td>{html.escape(str(doc.get('summary') or ''))}</td>"
         f"<td>{html.escape(_post_date(doc.get('published')))}</td>"
         f"<td>{html.escape(', '.join(str(alias) for alias in doc.get('aliases') or []) or '—')}</td>"
@@ -4600,7 +4608,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         summary = _post_summary(post)
         feed_items.append(
             {
-                "id": url,
+                "id": _post_guid(slug),
                 "url": url,
                 "title": redact(post.get("title", "")),
                 "summary": summary,
@@ -4624,7 +4632,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
             f"""    <item>
       <title>{html.escape(redact(post.get('title', '')))}</title>
       <link>{url}</link>
-      <guid>{url}</guid>
+      <guid>{_post_guid(slug)}</guid>
 {rss_pub_date}      <description>{html.escape(summary)}</description>
     </item>"""
         )

@@ -39,7 +39,7 @@ def main() -> int:
     worker = require(BLOG / "_worker.js")
     require(BLOG / "favicon.svg")
 
-    if "mini-shai-hulud-emergency-advisory.html" not in index:
+    if 'href="/posts/mini-shai-hulud-emergency-advisory"' not in index:
         raise AssertionError("index does not link the Mini Shai-Hulud post")
     for marker in ["Security research and advisories", '<h2 class="topic-heading">Topics</h2>', 'class="section-label">Featured<', 'id="subscribe-heading">Subscribe<', "RSS 2.0 for feed readers", "JSON Feed 1.1 for scripts"]:
         if marker not in index:
@@ -78,6 +78,16 @@ def main() -> int:
         raise AssertionError("RSS feed must not depend on an XSLT stylesheet")
     if rss.find("./channel/{http://www.w3.org/2005/Atom}link[@rel='self']") is None:
         raise AssertionError("RSS feed must declare its own URL with atom:link rel=self")
+    # Feed identities stay the original .html addresses (readers key on them);
+    # links and canonicals use the served, extensionless address.
+    first = feed_json["items"][0]
+    if not first["id"].endswith(".html") or first["url"].endswith(".html") or first["id"] != first["url"] + ".html":
+        raise AssertionError("JSON Feed items must keep their .html id and link to the extensionless URL")
+    rss_item = rss.find("./channel/item")
+    if not rss_item.findtext("guid").endswith(".html") or rss_item.findtext("link").endswith(".html"):
+        raise AssertionError("RSS items must keep their .html guid and link to the extensionless URL")
+    if 'rel="canonical" href="https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory"' not in post:
+        raise AssertionError("post canonical must be the extensionless address Pages serves")
     missing_content = [item.get("url") for item in feed_json["items"] if not (item.get("content_html") or item.get("content_text"))]
     if missing_content:
         raise AssertionError(f"JSON Feed 1.1 items need content_html or content_text: {missing_content[:3]}")

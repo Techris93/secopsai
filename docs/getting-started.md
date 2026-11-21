@@ -1,29 +1,29 @@
 # Getting Started with SecOpsAI
 
-Welcome! This guide will get you from telemetry refresh to triage in under 5 minutes.
+This guide takes you from install to your first triaged finding in about five minutes.
 
 ## What You'll Learn
 
 - How to install SecOpsAI
 - How to run your first detection
-- How to understand findings
-- How to investigate and triage them
+- How to read a finding
+- How to investigate and triage findings
 - Where to go next
 
 ## 30-Second Overview
 
-**SecOpsAI** is a local-first detection and triage platform for OpenClaw, Hermes Agent, and host telemetry. It comes with:
+SecOpsAI gives you security visibility for your network and your software supply chain, on your own hardware. It has four components:
 
-- **Detection rules** for dangerous execution, policy abuse, data exfiltration, malware, and supply-chain release review
-- **Reproducible benchmark corpus** for OpenClaw validation
-- **Live telemetry support** for OpenClaw, Hermes Agent, and host adapters
+| Component | What it does |
+| --- | --- |
+| **SecOpsAI Edge** | A sensor on your LAN that discovers devices and services and flags risky changes |
+| **SecOpsAI Research** | Watches package registries for typosquats and suspicious releases |
+| **Core** | The local store and `secopsai` CLI: findings, the asset graph, correlation, triage and reports |
+| **Console** | A browser dashboard over the same findings |
 
-For a complete Hermes Agent 0.18.2+ installation, including the read-only native plugin and five-minute background monitor, run:
+Agent integrations bring OpenClaw and Hermes Agent telemetry into the same findings and triage workflow. All analysis runs on your machine: raw scans and package artifacts never leave it, and cloud reports carry minimized findings only.
 
-```bash
-curl -fsSL https://secopsai.dev/install-hermes.sh | bash
-```
-- **Native triage workflow** with investigation reports and queued analyst actions
+This guide starts with Core, the CLI every other component reports into. For the network sensor, see [SecOpsAI Edge](edge-integration.md). For registry surveillance, see [Research Operations](research-operations.md).
 
 ## Install (2 minutes)
 
@@ -101,6 +101,14 @@ python prepare.py  # Generate data/events.json and data/events_unlabeled.json
 python -m pytest tests/ -v  # Optional: verify installation
 ```
 
+### Option 3: Hermes Agent
+
+For Hermes Agent 0.18.2 or later, this installs Core, enables the read-only native plugin and starts the five-minute background monitor:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
+
 ### GitHub-Native Install And CI
 
 The published npm package is the OpenClaw plugin distribution, not the complete
@@ -170,6 +178,8 @@ See
 
 ## Run Your First Detection (1 minute)
 
+The quickest end-to-end check is the bundled attack benchmark: it replays labeled agent telemetry through the detection rules and scores the result.
+
 ### Generate a Benchmark Corpus
 
 Create a reproducible labeled attack dataset:
@@ -234,7 +244,7 @@ Expected result:
 └─────────────────────────────────────────────┘
 ```
 
-Perfect score! Your detection pipeline is ready.
+A score of 1.0 means every simulated attack was caught with no false positives, so the detection pipeline is working.
 
 ### Run on Live Telemetry (Optional)
 
@@ -261,6 +271,25 @@ secopsai list --platform hermes
 SecOpsAI does not read `~/.hermes/auth.json`, `.env`, or provider credential
 files. See [Hermes Integration](Hermes-Integration.md) for the full source and
 rule map.
+
+## Start Network and Supply-Chain Monitoring
+
+With an Edge sensor running, pull its asset graph and findings into Core, then check freshness. `edge sync` reads `SECOPSAI_EDGE_API_URL` and a workspace export token in `SECOPSAI_EDGE_ACCESS_TOKEN`:
+
+```bash
+secopsai edge sync      # import the Edge graph and findings into the local Core store
+secopsai edge status    # source, bundle and sync timestamps, and the cursor
+secopsai graph assets   # the discovered asset inventory
+```
+
+Run one research cycle to collect recent package releases and score them against your watchlists:
+
+```bash
+secopsai research worker run --once   # one bounded collection pass across due registries
+secopsai research score run           # score collected events into candidates
+```
+
+See [SecOpsAI Edge](edge-integration.md) to set up a sensor, and [Research Discovery Platform](research-discovery.md) for watchlists, monitors and collector health.
 
 ## Run Your First Triage Pass
 
