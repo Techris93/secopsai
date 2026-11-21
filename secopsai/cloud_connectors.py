@@ -8,6 +8,7 @@ safe to persist through :mod:`secopsai.enterprise_store`.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -257,6 +258,7 @@ def collect_connector(
     if source not in NORMALIZERS:
         raise ValueError(f"unsupported read-only connector source: {source}")
     bounded = max(1, min(int(limit), 500))
+    started = time.monotonic()
     try:
         response = fetcher(source, cursor)
         if isinstance(response, dict):
@@ -278,7 +280,8 @@ def collect_connector(
             normalized["organization_id"] = context.organization_id
             persisted = store.append_event(normalized, idempotency_key=f"{source}:{normalized.get('correlation_id') or normalized.get('event_id')}")
             events.append(persisted)
-        store.upsert_source_cursor({"source": source, "cursor_value": next_cursor, "status": "healthy", "last_success_at": utc_now(), "metadata": {"events": len(events)}})
+        latency_ms = round((time.monotonic() - started) * 1000, 1)
+        store.upsert_source_cursor({"source": source, "cursor_value": next_cursor, "status": "healthy", "last_success_at": utc_now(), "metadata": {"events": len(events), "latency_ms": latency_ms}})
         return ConnectorResult(source, events, next_cursor, "healthy")
     except Exception as exc:
         reason = str(exc)[:1000]

@@ -30,19 +30,62 @@ secopsai enterprise workflow pentest --input engagement.json --json
 
 An engagement without scope or authorization is rejected. A new engagement
 starts with `status: planned`; saving the same `engagement_id` again updates
-it.
+it and keeps the previous save as a version.
 
-## Reports and retests
+## Version history
 
-Store the tester's report as evidence through `POST /api/v1/enterprise/evidence`
-(see [GRC Evidence](grc-evidence.md)), with the engagement ID in its metadata.
-SecOpsAI records the report's SHA-256, so any later change to it is
-detectable. DAST results for targets in scope can be added through
+Every save keeps a numbered copy, with the actor and time:
+
+```bash
+secopsai enterprise workflow-versions pentest PT-2026-Q4 --json            # list versions
+secopsai enterprise workflow-versions pentest PT-2026-Q4 --version 1 --json  # one version in full
+```
+
+The API serves the same at `GET /api/v1/enterprise/workflows/pentest/<id>/versions`.
+
+## Quarantine a report
+
+```bash
+secopsai enterprise pentest-report submit --engagement-id PT-2026-Q4 --file report.pdf --json
+secopsai enterprise pentest-report review --report-id PTR-... --decision accepted --note "Checked scope" --json
+```
+
+A report is accepted into quarantine only for an engagement with scope and
+authorization on record. SecOpsAI hashes it (SHA-256), copies it to
+`data/enterprise/quarantine/<organization>/<sha256>.quarantine` (or
+`SECOPSAI_ENTERPRISE_QUARANTINE_DIR`) with owner-only permissions, and never
+opens or executes it. Reports are limited to 50 MiB, and submitting the same
+file twice returns the existing record. A reviewer then accepts or rejects it,
+once; the decision, reviewer and note are recorded.
+
+## Track items through retest
+
+Items are recorded from an accepted report, linked to SecOpsAI findings and
+assigned to owners:
+
+```bash
+secopsai enterprise pentest-item add --report-id PTR-... --title "Stored XSS in search" \
+  --severity high --owner web-team --finding-id OCF-0042 --due-at 2026-12-15 --json
+secopsai enterprise pentest-item update --item-id PTI-... --status fixed_pending_retest --json
+secopsai enterprise pentest-item update --item-id PTI-... --status retest_passed --note "Verified by tester" --json
+secopsai enterprise pentest-show --engagement-id PT-2026-Q4 --json
+```
+
+| From | Allowed next status |
+| --- | --- |
+| `open` | `fixed_pending_retest`, `accepted_risk` |
+| `fixed_pending_retest` | `retest_passed`, `retest_failed` |
+| `retest_failed` | `fixed_pending_retest`, `accepted_risk` |
+| `accepted_risk` | `open` |
+| `retest_passed` | none (closed) |
+
+Accepting risk needs the `security_engineer` or `administrator` role. Every
+change is kept in the item's history with the actor and time. `pentest-show`
+lists the engagement's reports and items and reports `retest_status`:
+`complete` when every item has passed retest or has accepted risk.
+
+DAST results for targets in scope can be added through
 [Authorized DAST](dast.md).
-
-Report quarantine, linking report items to findings, owner assignment and
-retest tracking are not automated yet; track them in the engagement record and
-your ticketing system.
 
 ## Boundaries
 

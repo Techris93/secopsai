@@ -27,6 +27,20 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_PATH = ROOT / "migrations" / "enterprise" / "001_enterprise_security.sql"
+MIGRATION_002_PATH = ROOT / "migrations" / "enterprise" / "002_workflow_history_and_pentest.sql"
+SCHEMA_VERSION = 2
+# Workflow records whose every save is kept as a numbered version.
+VERSIONED_KINDS = {"questionnaire", "threat_model", "engagement"}
+MAX_REPORT_BYTES = 50 * 1024 * 1024
+PENTEST_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+# Item lifecycle: open -> fixed_pending_retest -> retest_passed | retest_failed (-> fixed_pending_retest again).
+PENTEST_TRANSITIONS = {
+    "open": {"fixed_pending_retest", "accepted_risk"},
+    "fixed_pending_retest": {"retest_passed", "retest_failed"},
+    "retest_failed": {"fixed_pending_retest", "accepted_risk"},
+    "retest_passed": set(),
+    "accepted_risk": {"open"},
+}
 MAX_EVENT_BYTES = 256 * 1024
 MAX_PAGE_SIZE = 500
 SENSITIVE_KEY = re.compile(r"(?i)(token|secret|password|passwd|api[_-]?key|authorization|cookie|private[_-]?key)")
@@ -138,7 +152,203 @@ class EnterpriseRepository(Protocol):
     def upsert_pentest_engagement(self, engagement: dict[str, Any]) -> dict[str, Any]: ...
 
 
-class SQLiteEnterpriseStore:
+
+def _quarantine_root(organization_id: str) -> Path:
+    base = Path(os.environ.get("SECOPSAI_ENTERPRISE_QUARANTINE_DIR") or (ROOT / "data" / "enterprise" / "quarantine"))
+    return base.expanduser() / re.sub(r"[^A-Za-z0-9_.-]", "_", organization_id)
+
+
+class _WorkflowExtensions:
+    """Version history, penetration-test reports and items, and metric inputs.
+
+    Shared by both adapters through ``_query(sql, params, fetch)``; SQL is
+    written with ``?`` placeholders and the PostgreSQL adapter converts them.
+    """
+
+    context: EnterpriseContext
+
+    def _query(self, sql: str, params: tuple = (), fetch: str = "") -> Any:  # pragma: no cover - per adapter
+        raise NotImplementedError
+
+    # -- version history -------------------------------------------------
+    def _record_version(self, kind: str, record_id: str, item: dict[str, Any]) -> None:
+        if kind not in VERSIONED_KINDS:
+            return
+        org = self.context.organization_id
+        self._query(
+            """INSERT INTO enterprise_record_versions
+               (organization_id, record_kind, record_id, version, status, actor_id, payload_json, created_at)
+               SELECT ?, ?, ?, COALESCE(MAX(version), 0) + 1, ?, ?, ?, ?
+               FROM enterprise_record_versions WHERE organization_id=? AND record_kind=? AND record_id=?""",
+            (org, kind, record_id, _bounded_text(item.get("status") or "draft", 40), self.context.actor_id, _payload(item), utc_now(), org, kind, record_id),
+        )
+
+    def list_record_versions(self, kind: str, record_id: str) -> list[dict[str, Any]]:
+        rows = self._query(
+            """SELECT record_kind, record_id, version, status, actor_id, created_at FROM enterprise_record_versions
+               WHERE organization_id=? AND record_kind=? AND record_id=? ORDER BY version DESC LIMIT 500""",
+            (self.context.organization_id, kind, record_id), "all")
+        return [dict(row) for row in rows]
+
+    def get_record_version(self, kind: str, record_id: str, version: int) -> dict[str, Any]:
+        row = self._query(
+            "SELECT * FROM enterprise_record_versions WHERE organization_id=? AND record_kind=? AND record_id=? AND version=?",
+            (self.context.organization_id, kind, record_id, int(version)), "one")
+        if not row:
+            raise ValueError(f"{kind} {record_id} has no version {version}")
+        return self._row(row)
+
+    # -- penetration-test reports -----------------------------------------
+    def _engagement(self, engagement_id: str) -> dict[str, Any]:
+        row = self._query("SELECT * FROM enterprise_pentest_engagements WHERE organization_id=? AND engagement_id=?",
+                          (self.context.organization_id, engagement_id), "one")
+        if not row:
+            raise ValueError(f"engagement {engagement_id} does not exist")
+        engagement = self._row(row)
+        payload = engagement.get("payload") if isinstance(engagement.get("payload"), dict) else {}
+        if not payload.get("scope") or not payload.get("authorized_by"):
+            raise PermissionError("engagement has no recorded scope and authorization")
+        return engagement
+
+    def quarantine_pentest_report(self, engagement_id: str, source_path: str | Path, *, filename: str = "") -> dict[str, Any]:
+        """Hash and copy a partner report into quarantine. The file is never opened as a document or executed."""
+        self.context.require_governance_write()
+        self._engagement(engagement_id)
+        source = Path(source_path)
+        size = source.stat().st_size
+        if size > MAX_REPORT_BYTES:
+            raise ValueError("report exceeds the 50 MiB quarantine limit")
+        digest = hashlib.sha256()
+        with source.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        sha = digest.hexdigest()
+        existing = self._query("SELECT * FROM enterprise_pentest_reports WHERE organization_id=? AND engagement_id=? AND sha256=?",
+                               (self.context.organization_id, engagement_id, sha), "one")
+        if existing:
+            return {**self._row(existing), "duplicate": True}
+        root = _quarantine_root(self.context.organization_id)
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        target = root / f"{sha}.quarantine"
+        if not target.exists():
+            with source.open("rb") as src, open(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as dst:
+                for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                    dst.write(chunk)
+        safe_name = re.sub(r"[^A-Za-z0-9._ -]", "_", filename or source.name)[:200] or "report"
+        report_id = _safe_id("PTR")
+        self._query(
+            """INSERT INTO enterprise_pentest_reports
+               (report_id, organization_id, engagement_id, filename, sha256, size_bytes, status, quarantine_path, submitted_by, received_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?)""",
+            (report_id, self.context.organization_id, engagement_id, safe_name, sha, size, str(target), self.context.actor_id, utc_now()))
+        return self.get_pentest_report(report_id)
+
+    def get_pentest_report(self, report_id: str) -> dict[str, Any]:
+        row = self._query("SELECT * FROM enterprise_pentest_reports WHERE organization_id=? AND report_id=?",
+                          (self.context.organization_id, report_id), "one")
+        if not row:
+            raise ValueError(f"report {report_id} does not exist")
+        return dict(row)
+
+    def review_pentest_report(self, report_id: str, *, decision: str, note: str = "") -> dict[str, Any]:
+        self.context.require_governance_write()
+        if decision not in {"accepted", "rejected"}:
+            raise ValueError("decision must be accepted or rejected")
+        report = self.get_pentest_report(report_id)
+        if report["status"] != "quarantined":
+            raise ValueError(f"report is already {report['status']}")
+        self._query("UPDATE enterprise_pentest_reports SET status=?, reviewed_by=?, review_note=?, reviewed_at=? WHERE organization_id=? AND report_id=?",
+                    (decision, self.context.actor_id, _bounded_text(note, 2000), utc_now(), self.context.organization_id, report_id))
+        return self.get_pentest_report(report_id)
+
+    # -- penetration-test items and retests -------------------------------
+    def add_pentest_item(self, *, report_id: str, title: str, severity: str, owner: str = "", finding_id: str = "", due_at: str = "") -> dict[str, Any]:
+        self.context.require_governance_write()
+        report = self.get_pentest_report(report_id)
+        if report["status"] != "accepted":
+            raise PermissionError("items can only come from an accepted report")
+        severity = severity.strip().lower()
+        if severity not in PENTEST_SEVERITIES:
+            raise ValueError(f"severity must be one of {sorted(PENTEST_SEVERITIES)}")
+        if not _bounded_text(title, 300):
+            raise ValueError("title is required")
+        item_id = _safe_id("PTI")
+        now = utc_now()
+        history = [{"at": now, "actor": self.context.actor_id, "status": "open"}]
+        self._query(
+            """INSERT INTO enterprise_pentest_items
+               (item_id, organization_id, engagement_id, report_id, title, severity, owner, finding_id, status, due_at, history_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
+            (item_id, self.context.organization_id, report["engagement_id"], report_id, _bounded_text(title, 300), severity,
+             _bounded_text(owner, 200), _bounded_text(finding_id, 120), _bounded_text(due_at, 40), _json(history), now))
+        return self.get_pentest_item(item_id)
+
+    def get_pentest_item(self, item_id: str) -> dict[str, Any]:
+        row = self._query("SELECT * FROM enterprise_pentest_items WHERE organization_id=? AND item_id=?",
+                          (self.context.organization_id, item_id), "one")
+        if not row:
+            raise ValueError(f"item {item_id} does not exist")
+        item = dict(row)
+        item["history"] = json.loads(item.pop("history_json") or "[]")
+        return item
+
+    def update_pentest_item(self, item_id: str, *, status: str = "", owner: str | None = None, finding_id: str | None = None, note: str = "") -> dict[str, Any]:
+        self.context.require_governance_write()
+        item = self.get_pentest_item(item_id)
+        now = utc_now()
+        entry: dict[str, Any] = {"at": now, "actor": self.context.actor_id}
+        new_status = item["status"]
+        if status:
+            if status not in PENTEST_TRANSITIONS.get(item["status"], set()):
+                raise ValueError(f"cannot move an item from {item['status']} to {status}")
+            if status == "accepted_risk" and self.context.role not in {"security_engineer", "administrator"}:
+                raise PermissionError("accepting risk needs the security_engineer or administrator role")
+            new_status = entry["status"] = status
+        if owner is not None:
+            entry["owner"] = owner = _bounded_text(owner, 200)
+        if finding_id is not None:
+            entry["finding_id"] = finding_id = _bounded_text(finding_id, 120)
+        if note:
+            entry["note"] = _bounded_text(note, 2000)
+        history = (item["history"] + [entry])[-200:]
+        retested_at = now if new_status in {"retest_passed", "retest_failed"} else item["retested_at"]
+        self._query(
+            "UPDATE enterprise_pentest_items SET status=?, owner=?, finding_id=?, retested_at=?, history_json=?, updated_at=? WHERE organization_id=? AND item_id=?",
+            (new_status, item["owner"] if owner is None else owner, item["finding_id"] if finding_id is None else finding_id,
+             retested_at, _json(history), now, self.context.organization_id, item_id))
+        return self.get_pentest_item(item_id)
+
+    def pentest_engagement_view(self, engagement_id: str) -> dict[str, Any]:
+        engagement = self._engagement(engagement_id)
+        org = self.context.organization_id
+        reports = [dict(row) for row in self._query(
+            "SELECT * FROM enterprise_pentest_reports WHERE organization_id=? AND engagement_id=? ORDER BY received_at", (org, engagement_id), "all")]
+        items = [self.get_pentest_item(row["item_id"]) for row in self._query(
+            "SELECT item_id FROM enterprise_pentest_items WHERE organization_id=? AND engagement_id=? ORDER BY updated_at", (org, engagement_id), "all")]
+        counts: dict[str, int] = {}
+        for item in items:
+            counts[item["status"]] = counts.get(item["status"], 0) + 1
+        closed = sum(counts.get(key, 0) for key in ("retest_passed", "accepted_risk"))
+        retest = "no_items" if not items else "complete" if closed == len(items) else "in_progress"
+        return {"engagement": engagement, "reports": reports, "items": items, "item_counts": counts, "retest_status": retest}
+
+    # -- metrics inputs -----------------------------------------------------
+    def metrics_inputs(self, *, limit: int = 1000) -> dict[str, Any]:
+        org = self.context.organization_id
+        bounded = max(1, min(int(limit), 5000))
+        open_vulns = [dict(row) for row in self._query(
+            "SELECT severity, sla_due_at FROM enterprise_vulnerabilities WHERE organization_id=? AND status NOT IN ('closed','resolved','fixed') LIMIT ?",
+            (org, bounded), "all")]
+        events = [dict(row) for row in self._query(
+            "SELECT observed_at, received_at FROM enterprise_events WHERE organization_id=? ORDER BY received_at DESC LIMIT ?",
+            (org, bounded), "all")]
+        items = [dict(row) for row in self._query(
+            "SELECT status FROM enterprise_pentest_items WHERE organization_id=?", (org,), "all")]
+        return {"open_vulnerabilities": open_vulns, "recent_events": events, "pentest_items": items}
+
+
+class SQLiteEnterpriseStore(_WorkflowExtensions):
     """Local enterprise repository with mandatory organization scoping."""
 
     def __init__(self, db_path: str | None = None, *, context: EnterpriseContext | None = None) -> None:
@@ -173,15 +383,26 @@ class SQLiteEnterpriseStore:
                 version = int(conn.execute("SELECT version FROM enterprise_schema_meta LIMIT 1").fetchone()[0])
             except (sqlite3.Error, TypeError, ValueError):
                 version = 0
-        if version >= 1:
+        if version >= SCHEMA_VERSION:
             return
         with sqlite_writer_lock(self.db_path):
             with self.connect() as conn:
-                conn.executescript(migration)
+                if version < 1:
+                    conn.executescript(migration)
+                conn.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
                 conn.execute("CREATE TABLE IF NOT EXISTS enterprise_schema_meta (version INTEGER NOT NULL)")
                 conn.execute("DELETE FROM enterprise_schema_meta")
-                conn.execute("INSERT INTO enterprise_schema_meta(version) VALUES (1)")
+                conn.execute("INSERT INTO enterprise_schema_meta(version) VALUES (?)", (SCHEMA_VERSION,))
                 conn.commit()
+
+    def _query(self, sql: str, params: tuple = (), fetch: str = "") -> Any:
+        with self.transaction() as conn:
+            cursor = conn.execute(sql, params)
+            if fetch == "one":
+                return cursor.fetchone()
+            if fetch == "all":
+                return cursor.fetchall()
+            return None
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -513,6 +734,7 @@ class SQLiteEnterpriseStore:
                 (record_id, self.context.organization_id, _bounded_text(item.get("status") or "draft", 40), _bounded_text(item.get("owner"), 200), _payload(item), item["updated_at"]),
             )
             row = conn.execute(f"SELECT * FROM {table} WHERE {id_column}=?", (record_id,)).fetchone()
+        self._record_version(kind, record_id, item)
         return self._row(row)
 
     def _audit(self, conn: sqlite3.Connection, action: str, result: str, details: dict[str, Any]) -> None:
@@ -535,7 +757,7 @@ class SQLiteEnterpriseStore:
         return result
 
 
-class PostgresEnterpriseStore:
+class PostgresEnterpriseStore(_WorkflowExtensions):
     """Hosted adapter using psycopg's bounded connection pool.
 
     The optional dependency is intentionally imported only when this adapter is
@@ -617,9 +839,18 @@ class PostgresEnterpriseStore:
         }
 
     def migrate(self) -> None:
-        migration = MIGRATION_PATH.read_text(encoding="utf-8")
         with self.pool.connection() as conn:
-            conn.execute(migration)
+            conn.execute(MIGRATION_PATH.read_text(encoding="utf-8"))
+            conn.execute(MIGRATION_002_PATH.read_text(encoding="utf-8"))
+
+    def _query(self, sql: str, params: tuple = (), fetch: str = "") -> Any:
+        with self.pool.connection() as conn:
+            cursor = conn.execute(sql.replace("?", "%s"), params)
+            if fetch == "one":
+                return cursor.fetchone()
+            if fetch == "all":
+                return list(cursor.fetchall())
+            return None
 
     def close(self) -> None:
         self.pool.close()
@@ -803,6 +1034,7 @@ class PostgresEnterpriseStore:
         record_id = _bounded_text(item.get(id_column) or _safe_id(kind[:3].upper()), 120)
         with self.pool.connection() as conn:
             row = conn.execute(f"INSERT INTO {table} ({id_column}, organization_id, status, owner, payload_json, updated_at) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT({id_column}) DO UPDATE SET status=excluded.status, owner=excluded.owner, payload_json=excluded.payload_json, updated_at=excluded.updated_at WHERE {table}.organization_id=excluded.organization_id RETURNING *", (record_id, self.context.organization_id, _bounded_text(item.get("status") or "draft", 40), _bounded_text(item.get("owner"), 200), _payload(item), item["updated_at"])).fetchone()
+        self._record_version(kind, record_id, item)
         return self._row(row)
 
     def upsert_questionnaire(self, questionnaire: dict[str, Any]) -> dict[str, Any]:

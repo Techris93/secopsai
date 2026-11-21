@@ -34,10 +34,21 @@ secopsai enterprise workflow threat-model --input threat-model.json --json
 `threat_model_id`, `title` and `owner` identify the model. `assets`, `threats`
 and `mitigations` are lists of objects with up to 500 entries each; their
 fields are yours to define, so the record fits your existing template. Saving
-the same ID again updates the model.
+the same ID again updates the model and keeps the previous save as a version.
 
 Every saved model has `method: stride` and `status: draft` until a reviewer
 moves it on.
+
+## Version history
+
+Every save keeps a numbered copy, with the actor and time:
+
+```bash
+secopsai enterprise workflow-versions threat-model TM-payments-api --json            # list versions
+secopsai enterprise workflow-versions threat-model TM-payments-api --version 1 --json  # one version in full
+```
+
+The API serves the same at `GET /api/v1/enterprise/workflows/threat-model/<id>/versions`.
 
 ## Review
 

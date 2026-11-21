@@ -82,3 +82,60 @@ def export_to_http_sink(events: Iterable[dict[str, Any]], *, endpoint: str, requ
     body = export_normalized_events(events)
     response = requester(endpoint, {"Content-Type": "application/x-ndjson"}, body)
     return {"status": "sent", "endpoint": endpoint, "response": response, "network_called": True}
+
+
+def _age_seconds(value: Any, now: float) -> float | None:
+    from datetime import datetime
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return max(0.0, now - datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def enterprise_metrics(store: Any, *, now: float | None = None) -> MetricsRegistry:
+    """Metrics computed from the persistent enterprise store.
+
+    A per-process registry is empty in a fresh CLI or API process, so the
+    values here come from stored state: record counts, connector cursors, open
+    vulnerabilities, recent events and penetration-test items.
+    """
+    current = time.time() if now is None else now
+    registry = MetricsRegistry()
+    counts = (store.summary(limit=1).get("counts") or {})
+    for name in ("events", "assets", "vulnerabilities", "open_vulnerabilities", "controls", "evidence", "dead_letters", "actions"):
+        registry.gauge(f"{name}_total", counts.get(name, 0))
+
+    cursors = store.list_source_cursors(limit=500)
+    registry.gauge("sources_total", len(cursors))
+    registry.gauge("sources_degraded", sum(1 for cursor in cursors if cursor.get("status") != "healthy"))
+    for cursor in cursors:
+        source = str(cursor.get("source") or "unknown")
+        age = _age_seconds(cursor.get("last_success_at"), current)
+        if age is not None:
+            registry.gauge(f"source_age_seconds_{source}", round(age, 1))
+        metadata = cursor.get("metadata") if isinstance(cursor.get("metadata"), dict) else {}
+        if isinstance(metadata.get("latency_ms"), (int, float)):
+            registry.gauge(f"source_latency_ms_{source}", metadata["latency_ms"])
+
+    inputs = store.metrics_inputs()
+    overdue = 0
+    for vulnerability in inputs["open_vulnerabilities"]:
+        due_in = _age_seconds(vulnerability.get("sla_due_at"), current)
+        # _age_seconds clamps at zero, so a positive value means the due date has passed.
+        if due_in:
+            overdue += 1
+        registry.increment(f"open_vulnerabilities_{str(vulnerability.get('severity') or 'unknown').lower()}")
+    registry.gauge("vulnerabilities_overdue", overdue)
+    for event in inputs["recent_events"]:
+        observed = _age_seconds(event.get("observed_at"), current)
+        received = _age_seconds(event.get("received_at"), current)
+        if observed is not None and received is not None:
+            registry.observe("ingest_delay_seconds", max(0.0, observed - received))
+    items = inputs["pentest_items"]
+    registry.gauge("pentest_items_open", sum(1 for item in items if item.get("status") in {"open", "retest_failed"}))
+    registry.gauge("pentest_items_awaiting_retest", sum(1 for item in items if item.get("status") == "fixed_pending_retest"))
+    return registry

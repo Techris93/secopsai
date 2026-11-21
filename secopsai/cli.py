@@ -178,7 +178,7 @@ from secopsai.enterprise_workflows import control_record, pentest_engagement, qu
 from secopsai.awareness import recommend_from_findings
 from secopsai.ticketing import GitHubIssueAdapter, JiraIssueAdapter, TicketRequest
 from secopsai.kubernetes_security import dry_run_admission, scan_manifest
-from secopsai.siem import MetricsRegistry
+from secopsai.siem import enterprise_metrics
 from secopsai.vulnerability_management import normalize_advisory
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
@@ -1547,6 +1547,51 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     enterprise_awareness.add_argument("--organization-id", default=None)
     enterprise_awareness.add_argument("--actor", default="operator")
     enterprise_awareness.add_argument("--role", default="operator")
+    def _enterprise_scope(parser):
+        parser.add_argument("--db-path", default=None)
+        parser.add_argument("--organization-id", default=None)
+        parser.add_argument("--actor", default="operator")
+        parser.add_argument("--role", default="operator")
+
+    enterprise_metrics_cmd = enterprise_sub.add_parser("metrics", help="Show metrics computed from the enterprise store")
+    enterprise_metrics_cmd.add_argument("--prometheus", action="store_true", help="Print Prometheus text instead of JSON")
+    _enterprise_scope(enterprise_metrics_cmd)
+    enterprise_versions = enterprise_sub.add_parser("workflow-versions", help="List or show saved versions of a workflow record")
+    enterprise_versions.add_argument("kind", choices=["questionnaire", "threat-model", "pentest"])
+    enterprise_versions.add_argument("record_id")
+    enterprise_versions.add_argument("--version", type=int, default=0, help="Show this version's full record")
+    _enterprise_scope(enterprise_versions)
+    enterprise_report = enterprise_sub.add_parser("pentest-report", help="Quarantine or review a penetration-test report")
+    report_sub = enterprise_report.add_subparsers(dest="report_cmd", required=True)
+    report_submit = report_sub.add_parser("submit", help="Hash and quarantine a partner report")
+    report_submit.add_argument("--engagement-id", required=True)
+    report_submit.add_argument("--file", required=True)
+    _enterprise_scope(report_submit)
+    report_review = report_sub.add_parser("review", help="Accept or reject a quarantined report")
+    report_review.add_argument("--report-id", required=True)
+    report_review.add_argument("--decision", choices=["accepted", "rejected"], required=True)
+    report_review.add_argument("--note", default="")
+    _enterprise_scope(report_review)
+    enterprise_item = enterprise_sub.add_parser("pentest-item", help="Track penetration-test items through fix and retest")
+    item_sub = enterprise_item.add_subparsers(dest="item_cmd", required=True)
+    item_add = item_sub.add_parser("add", help="Record an item from an accepted report")
+    item_add.add_argument("--report-id", required=True)
+    item_add.add_argument("--title", required=True)
+    item_add.add_argument("--severity", required=True, choices=["critical", "high", "medium", "low", "info"])
+    item_add.add_argument("--owner", default="")
+    item_add.add_argument("--finding-id", default="")
+    item_add.add_argument("--due-at", default="")
+    _enterprise_scope(item_add)
+    item_update = item_sub.add_parser("update", help="Change an item's status, owner or linked finding")
+    item_update.add_argument("--item-id", required=True)
+    item_update.add_argument("--status", default="", choices=["", "open", "fixed_pending_retest", "retest_passed", "retest_failed", "accepted_risk"])
+    item_update.add_argument("--owner", default=None)
+    item_update.add_argument("--finding-id", default=None)
+    item_update.add_argument("--note", default="")
+    _enterprise_scope(item_update)
+    enterprise_pentest_show = enterprise_sub.add_parser("pentest-show", help="Show an engagement with its reports, items and retest status")
+    enterprise_pentest_show.add_argument("--engagement-id", required=True)
+    _enterprise_scope(enterprise_pentest_show)
     enterprise_ticket = enterprise_sub.add_parser("ticket-propose", help="Create an approval-gated ticket proposal")
     enterprise_ticket.add_argument("--provider", choices=["github", "jira"], required=True)
     enterprise_ticket.add_argument("--project", required=True)
@@ -4874,8 +4919,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = {
                     "store": store.health(),
                     "summary": store.summary(limit=25),
-                    "metrics": MetricsRegistry().snapshot(),
+                    "metrics": enterprise_metrics(store).snapshot(),
                 }
+            elif args.enterprise_cmd == "metrics":
+                registry = enterprise_metrics(store)
+                if args.prometheus:
+                    print(registry.prometheus(), end="")
+                    return 0
+                payload = registry.snapshot()
+            elif args.enterprise_cmd == "workflow-versions":
+                kind = {"questionnaire": "questionnaire", "threat-model": "threat_model", "pentest": "engagement"}[args.kind]
+                payload = (store.get_record_version(kind, args.record_id, args.version) if args.version
+                           else {"versions": store.list_record_versions(kind, args.record_id)})
+            elif args.enterprise_cmd == "pentest-report":
+                if args.report_cmd == "submit":
+                    payload = store.quarantine_pentest_report(args.engagement_id, args.file)
+                else:
+                    payload = store.review_pentest_report(args.report_id, decision=args.decision, note=args.note)
+            elif args.enterprise_cmd == "pentest-item":
+                if args.item_cmd == "add":
+                    payload = store.add_pentest_item(report_id=args.report_id, title=args.title, severity=args.severity,
+                                                     owner=args.owner, finding_id=args.finding_id, due_at=args.due_at)
+                else:
+                    payload = store.update_pentest_item(args.item_id, status=args.status, owner=args.owner,
+                                                        finding_id=args.finding_id, note=args.note)
+            elif args.enterprise_cmd == "pentest-show":
+                payload = store.pentest_engagement_view(args.engagement_id)
             elif args.enterprise_cmd == "ingest":
                 fixture = json.loads(Path(args.input).read_text(encoding="utf-8"))
                 payload = collect_enterprise_connector(
@@ -4901,6 +4970,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             elif args.enterprise_cmd == "prioritize-vulnerability":
                 item = json.loads(Path(args.input).read_text(encoding="utf-8"))
                 payload = normalize_advisory(item)
+                # A stable ID from advisory, package, version and asset, so re-running updates the same record.
+                payload.setdefault("vulnerability_id", f"VUL-{payload['vulnerability_key']}")
                 payload["stored"] = store.upsert_vulnerability(payload)
             elif args.enterprise_cmd == "control":
                 payload = store.upsert_control(control_record(control_id=args.control_id, framework=args.framework, title=args.title, owner=args.owner, status=args.status))

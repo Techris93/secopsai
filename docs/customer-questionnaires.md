@@ -36,10 +36,21 @@ secopsai enterprise workflow questionnaire --input questionnaire.json --json
 | `answer` | 10,000 characters |
 | `evidence_refs` | 20 references per answer |
 
-Saving the same `questionnaire_id` again replaces the stored record; earlier
-versions are not kept, so export one before a major revision if you need it. The questionnaire's status
+Saving the same `questionnaire_id` again updates it and keeps the previous
+save as a numbered version. The questionnaire's status
 is always stored as `draft`; each answer keeps its own status for review
 tracking.
+
+## Version history
+
+Every save keeps a numbered copy, with the actor and time:
+
+```bash
+secopsai enterprise workflow-versions questionnaire Q-2026-ACME --json            # list versions
+secopsai enterprise workflow-versions questionnaire Q-2026-ACME --version 1 --json  # one version in full
+```
+
+The API serves the same at `GET /api/v1/enterprise/workflows/questionnaire/<id>/versions`.
 
 ## Linking evidence
 

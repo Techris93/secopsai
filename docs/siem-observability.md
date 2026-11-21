@@ -9,7 +9,7 @@ minimized: raw scans and credential-shaped fields never leave the store.
 | Endpoint | Returns |
 | --- | --- |
 | `GET /api/v1/enterprise/health` | Store health, source cursors and dead letters (up to 100 each) |
-| `GET /api/v1/enterprise/metrics` | Metrics snapshot and the same data as Prometheus text |
+| `GET /api/v1/enterprise/metrics` | The metrics below, as a snapshot and as Prometheus text |
 | `GET /api/v1/enterprise/events?limit=&cursor=` | Normalized events, newest first, with `next_cursor` and `has_more` |
 | `POST /api/v1/enterprise/events` | Ingest one normalized event; send an `Idempotency-Key` header to make retries safe |
 
@@ -19,21 +19,27 @@ metrics snapshot.
 
 ## Metrics
 
-`secopsai.siem.MetricsRegistry` holds bounded, thread-safe metrics:
+Metrics are computed from the enterprise store, so the CLI, the API and any
+scraper see the same values whichever process answers:
 
-| Type | Use |
-| --- | --- |
-| Counter | Totals that only grow, such as processing failures |
-| Gauge | Current values, such as queue depth or source freshness |
-| Histogram | Distributions such as ingestion latency, MTTD or remediation age; keeps the last 1,000 samples |
+```bash
+secopsai enterprise metrics --json
+secopsai enterprise metrics --prometheus
+```
 
-A snapshot reports each counter and gauge, and for each histogram its count,
-sum and maximum. The Prometheus text prefixes every metric with `secopsai_`
-and reports histograms as `_count`, `_sum` and `_max`.
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `events_total`, `assets_total`, `vulnerabilities_total`, `open_vulnerabilities_total`, `controls_total`, `evidence_total`, `actions_total`, `dead_letters_total` | gauge | Record counts for the organization |
+| `sources_total`, `sources_degraded` | gauge | Connectors, and how many are not healthy |
+| `source_age_seconds_<source>` | gauge | Seconds since the source's last successful page |
+| `source_latency_ms_<source>` | gauge | How long the last successful page took to fetch and store |
+| `open_vulnerabilities_<severity>` | counter | Open vulnerabilities by severity |
+| `vulnerabilities_overdue` | gauge | Open vulnerabilities past their SLA due date |
+| `ingest_delay_seconds` | histogram | Delay between when an event happened and when it was stored, over the last 1,000 events |
+| `pentest_items_open`, `pentest_items_awaiting_retest` | gauge | Penetration-test items not yet fixed, and fixed but not retested |
 
-The registry lives in one process. The CLI and the API endpoint above create a
-fresh registry for each request, so they report empty metrics unless a
-long-running hosted adapter records into a shared registry.
+The Prometheus text prefixes every name with `secopsai_`, replaces other
+characters with `_`, and reports histograms as `_count`, `_sum` and `_max`.
 
 ## Source health
 
