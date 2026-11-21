@@ -95,6 +95,13 @@ class BlogPublishingTests(unittest.TestCase):
                 self.assertIn("/assets/subscribe.js", page)
                 self.assertIn('href="/feed.xml?raw=1"', page, "the RSS card must not loop back to the page")
             self.assertNotIn('class="topic-catalog"', subscribe_page)
+            # Stylesheet and scripts carry a content hash, so new HTML never meets a stale cached copy.
+            built = [(paths.root / name).read_text(encoding="utf-8") for name in ("index.html", "json-feed.html", "404.html")]
+            built.append(Path(published["post_path"]).read_text(encoding="utf-8"))
+            for page in (subscribe_page, status_template, *built):
+                self.assertRegex(page, r'href="/assets/blog\.css\?v=[0-9a-f]{12}"')
+                self.assertNotRegex(page, r'(?:href|src)="/assets/[a-z]+\.(?:css|js)"')
+            self.assertIn("position:absolute", subscribe_page, "the spam trap stays hidden without the stylesheet")
             for slot in blog.SUBSCRIBE_STATUS_SLOTS:
                 self.assertIn(slot, status_template)
             self.assertIn('content="noindex"', status_template)

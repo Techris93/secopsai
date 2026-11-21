@@ -3339,6 +3339,22 @@ def _render_meta_tags(
     return "\n    ".join(tags)
 
 
+def _asset_url(name: str) -> str:
+    """A /assets URL carrying the file's content hash.
+
+    Browsers may keep a stylesheet or script for hours, so new HTML could meet
+    an old cached copy (the email form rendered unstyled after its first
+    deploy). A changed file gets a new URL, so a page always loads the files it
+    was built with.
+    """
+    path = BLOG_DIR / "assets" / name
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return f"/assets/{name}"
+    return f"/assets/{name}?v={digest}"
+
+
 def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List[tuple[str, str]]] = None) -> str:
     nav_links = links or [
         ("/", "Blog Home"),
@@ -3463,7 +3479,7 @@ def _render_email_signup() -> str:
             <input id="subscribe-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="you@example.com" required />
             <button class="button" type="submit">Subscribe</button>
           </div>
-          <input class="email-signup-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+          <input class="email-signup-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;opacity:0" />
           <div class="email-signup-check" data-subscribe-turnstile hidden></div>
           <p class="email-signup-note">One email per new post. Every email has an unsubscribe link.</p>
           <p class="email-signup-status" data-subscribe-status role="status" aria-live="polite"></p>
@@ -3756,7 +3772,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header(links=[
@@ -3827,8 +3843,8 @@ def _render_post_html(post: Dict[str, Any]) -> str:
       </aside>
       </div>
     </main>
-    <script src="/assets/blog.js" defer></script>
-    <script src="/assets/comments.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
+    <script src="{_asset_url('comments.js')}" defer></script>
   </body>
 </html>
 """
@@ -4012,7 +4028,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header(links=[
@@ -4044,8 +4060,8 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
       {_render_subscribe_panel(posts)}
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
-    <script src="/assets/subscribe.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
+    <script src="{_asset_url('subscribe.js')}" defer></script>
   </body>
 </html>
 """
@@ -4139,7 +4155,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header(links=[
@@ -4174,7 +4190,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
       </section>
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
   </body>
 </html>
 """
@@ -4226,7 +4242,7 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header(subtitle="JSON Feed", links=[
@@ -4252,8 +4268,8 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
       <section class="shell latest-grid">{items}</section>
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
-    <script src="/assets/subscribe.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
+    <script src="{_asset_url('subscribe.js')}" defer></script>
   </body>
 </html>
 """
@@ -4276,7 +4292,7 @@ def _render_subscribe_page() -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header()}
@@ -4284,8 +4300,8 @@ def _render_subscribe_page() -> str:
       {_render_subscribe_panel(topics=False)}
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
-    <script src="/assets/subscribe.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
+    <script src="{_asset_url('subscribe.js')}" defer></script>
   </body>
 </html>
 """
@@ -4307,7 +4323,7 @@ def _render_subscribe_status_template() -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header()}
@@ -4321,7 +4337,7 @@ def _render_subscribe_status_template() -> str:
       </section>
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
   </body>
 </html>
 """
@@ -4343,7 +4359,7 @@ def _render_not_found_page() -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header()}
@@ -4431,7 +4447,7 @@ def _advisory_page(*, title: str, description: str, canonical: str, body: str) -
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/blog.css" />
+    <link rel="stylesheet" href="{_asset_url('blog.css')}" />
   </head>
   <body>
     {_render_site_header(subtitle="Advisories", links=[("/", "Blog Home"), ("/advisories/", "Advisories"), ("/advisories/index.json", "Advisory feed"), ("https://docs.secopsai.dev/", "Docs")])}
@@ -4439,7 +4455,7 @@ def _advisory_page(*, title: str, description: str, canonical: str, body: str) -
 {body}
     </main>
     {_render_site_footer()}
-    <script src="/assets/blog.js" defer></script>
+    <script src="{_asset_url('blog.js')}" defer></script>
   </body>
 </html>
 """
