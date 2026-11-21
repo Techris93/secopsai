@@ -232,6 +232,33 @@ button.button {
 .topic-heading { font-size: 18px; margin: 24px 0 12px; }
 .subscribe-top > p { color: var(--muted); font-size: 13.5px; margin: 0; }
 .section-divider { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
+.email-signup { margin-top: 18px; max-width: 520px; }
+.email-signup-label { display: block; font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+.email-signup-row { display: flex; gap: 8px; }
+.email-signup-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-dark);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+}
+.email-signup-row input:focus-visible { outline: 2px solid var(--note); outline-offset: 1px; }
+.email-signup-row .button:disabled { opacity: 0.6; cursor: progress; }
+.email-signup-trap { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
+.email-signup-check { margin-top: 10px; }
+.email-signup-note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+.email-signup-status { font-size: 13.5px; margin: 8px 0 0; min-height: 1em; }
+.email-signup-status:empty { display: none; }
+.email-signup-status[data-state="ok"] { color: var(--ok); font-weight: 600; }
+.email-signup-status[data-state="error"] { color: var(--warning); }
+@media (max-width: 480px) {
+  .email-signup-row { flex-direction: column; }
+  .email-signup-row .button { width: 100%; }
+}
 
 /* ── Feed cards ──────────────────────────────────────────── */
 .feed-choice-grid {

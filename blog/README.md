@@ -99,6 +99,28 @@ curl https://blog.secopsai.dev/api/comments?health=1
 
 `configured` must be `true` before public comment submission works.
 
+## Email Subscriptions
+
+The Subscribe section (home page, `/subscribe`, `/json-feed`) takes an email
+address. The Pages worker stores it in the comments D1 database
+(`migrations/blog-subscribers/`), behind the same Turnstile check as comments,
+and emails a confirmation link through Resend. The address gets posts only after
+the link's page is confirmed with a button (mail scanners that prefetch links
+cannot confirm). Every post email has a one-click unsubscribe link (RFC 8058).
+The form gives every address the same answer, so it never reveals who is
+subscribed.
+
+- Schema: `npx wrangler d1 execute secopsai-blog-comments --remote --file migrations/blog-subscribers/0001_blog_subscribers.sql`
+- `RESEND_API_KEY`: copied on each Blog Ops deploy from the `SECOPSAI_SMTP_PASSWORD` Actions secret.
+- `BLOG_NEWSLETTER_SECRET`: generated fresh on each deploy; signs the deploy job's "email new posts" call.
+- `BLOG_NEWSLETTER_FROM`: optional sender, default `SecOpsAI Security Blog <research@secopsai.dev>`.
+
+After each deploy, Blog Ops asks the worker to email posts published in the
+last two days (`scripts/blog_newsletter.py`). The worker mails each post once,
+only to addresses confirmed before it started, and resumes a send that stopped
+part-way without mailing anyone twice. Set the repository variable
+`BLOG_NEWSLETTER_PAUSED=true` to stop sending.
+
 ## Publishing Automation
 
 Blog publishing is draft-first. External news and generated finding/advisory posts require explicit publish confirmation.
@@ -142,8 +164,11 @@ Feed UX:
   older aggregation tools.
 - `feed.json` is the JSON Feed for scripts, apps, and automation tools that
   prefer structured JSON.
-- Both feeds expose the same approved public posts. Raw XML/JSON in a browser is
-  expected, so the homepage and `/json-feed` explain what the links are for.
+- Both feeds expose the same approved public posts, and every JSON Feed item
+  carries the post body (`content_html`), as JSON Feed 1.1 requires.
+- Browsers no longer style RSS with XSLT, so the Pages worker sends a browser
+  that opens `/feed.xml` the `/subscribe` page and one that opens `/feed.json`
+  the `/json-feed` page. Feed readers, scripts and `?raw=1` get the feed itself.
 
 Safety gates:
 

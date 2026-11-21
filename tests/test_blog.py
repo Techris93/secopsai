@@ -26,13 +26,16 @@ class BlogPublishingTests(unittest.TestCase):
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
             paths.root.mkdir(parents=True)
             written = blog._write_site_metadata([{"slug": "unit-post", "published_at": "2026-07-10"}], paths)
-            self.assertEqual(len(written), 4)
+            self.assertEqual(len(written), 6)
+            self.assertIn(paths.root / "subscribe.html", written)
+            self.assertIn(paths.root / "subscribe-status.html", written)
             security_txt = (paths.root / ".well-known" / "security.txt").read_text(encoding="utf-8")
             self.assertIn("Contact: mailto:security@secopsai.dev", security_txt)
             self.assertRegex(security_txt, r"Expires: \d{4}-\d{2}-\d{2}T00:00:00Z")
             sitemap = ET.fromstring((paths.root / "sitemap.xml").read_text(encoding="utf-8"))
             locs = [node.text for node in sitemap.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
             self.assertIn("https://blog.secopsai.dev/posts/unit-post.html", locs)
+            self.assertIn("https://blog.secopsai.dev/subscribe", locs)
             self.assertIn('content="noindex"', (paths.root / "404.html").read_text(encoding="utf-8"))
 
     def test_draft_advisory_publish_and_rebuild_feeds(self):
@@ -73,8 +76,28 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertGreaterEqual(feed["items"][0]["reading_time_minutes"], 1)
             self.assertTrue(feed["items"][0]["url"].startswith("https://blog.secopsai.dev/posts/"))
             self.assertTrue(feed["items"][0]["summary"])
+            # JSON Feed 1.1 requires content on every item; links must work outside the site.
+            self.assertIn("<", feed["items"][0]["content_html"])
+            self.assertNotRegex(feed["items"][0]["content_html"], r'\s(?:href|src)="/(?!/)')
             self.assertEqual(len(rss_items), 1)
             self.assertTrue(rss_items[0].findtext("description"))
+            # Browsers dropped XSLT: no stylesheet, and the feed names its own URL.
+            rss_text = (paths.root / "feed.xml").read_text(encoding="utf-8")
+            self.assertNotIn("xml-stylesheet", rss_text)
+            self.assertEqual(
+                rss.getroot().find("./channel/{http://www.w3.org/2005/Atom}link").get("href"),
+                "https://blog.secopsai.dev/feed.xml",
+            )
+            subscribe_page = (paths.root / "subscribe.html").read_text(encoding="utf-8")
+            status_template = (paths.root / "subscribe-status.html").read_text(encoding="utf-8")
+            for page in (subscribe_page, (paths.root / "index.html").read_text(encoding="utf-8")):
+                self.assertIn("data-subscribe-form", page)
+                self.assertIn("/assets/subscribe.js", page)
+                self.assertIn('href="/feed.xml?raw=1"', page, "the RSS card must not loop back to the page")
+            self.assertNotIn('class="topic-catalog"', subscribe_page)
+            for slot in blog.SUBSCRIBE_STATUS_SLOTS:
+                self.assertIn(slot, status_template)
+            self.assertIn('content="noindex"', status_template)
             index = (paths.root / "index.html").read_text(encoding="utf-8")
             latest = (paths.root / "posts" / "index.html").read_text(encoding="utf-8")
             json_landing = (paths.root / "json-feed.html").read_text(encoding="utf-8")

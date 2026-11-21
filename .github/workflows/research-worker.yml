@@ -342,7 +342,7 @@ jobs:
         run: |
           python scripts/verify_blog.py
           node --check blog/_worker.js
-          node --test tests/js/blog_worker.test.mjs
+          node --test tests/js/blog_worker.test.mjs tests/js/blog_subscribe.test.mjs
           python -m pytest tests/test_blog.py -q
 
       - name: Commit and deploy
@@ -352,7 +352,7 @@ jobs:
           set -euo pipefail
           git config user.name "secopsai-blog-ops[bot]"
           git config user.email "115749095+Techris93@users.noreply.github.com"
-          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/sitemap.xml blog/robots.txt blog/.well-known
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/subscribe.html blog/subscribe-status.html blog/sitemap.xml blog/robots.txt blog/.well-known
           git add blog/data/published-posts.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Approved editions are already in the blog; deploying to make sure they are live."

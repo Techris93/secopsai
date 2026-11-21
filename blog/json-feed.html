@@ -53,6 +53,17 @@
             <h2 id="subscribe-heading">Subscribe</h2>
           </div>
         </div>
+        <form class="email-signup" data-subscribe-form novalidate>
+          <label class="email-signup-label" for="subscribe-email">Get new posts by email</label>
+          <div class="email-signup-row">
+            <input id="subscribe-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="you@example.com" required />
+            <button class="button" type="submit">Subscribe</button>
+          </div>
+          <input class="email-signup-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+          <div class="email-signup-check" data-subscribe-turnstile hidden></div>
+          <p class="email-signup-note">One email per new post. Every email has an unsubscribe link.</p>
+          <p class="email-signup-status" data-subscribe-status role="status" aria-live="polite"></p>
+        </form>
         <div class="section-divider" aria-hidden="true"></div>
         <div class="feed-choice-grid">
           <article class="feed-card">
@@ -69,7 +80,7 @@
               </div>
             </div>
             <div class="feed-url-row">
-              <a class="feed-url" href="/feed.xml">
+              <a class="feed-url" href="/feed.xml?raw=1">
                 <span aria-hidden="true">⌁</span>
                 <code>https://blog.secopsai.dev/feed.xml</code>
               </a>
@@ -245,5 +256,7 @@
         <div class="copyright">© 2026 SecOpsAI. All rights reserved.</div>
       </div>
     </footer>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/subscribe.js" defer></script>
   </body>
 </html>

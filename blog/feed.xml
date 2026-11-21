@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<?xml-stylesheet type="text/xsl" href="/rss.xsl" ?>
-<rss version="2.0">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>SecOpsAI Security Blog</title>
     <link>https://blog.secopsai.dev/</link>
+    <atom:link href="https://blog.secopsai.dev/feed.xml" rel="self" type="application/rss+xml" />
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
     <lastBuildDate>Fri, 20 Nov 2026 16:52:04 GMT</lastBuildDate>
